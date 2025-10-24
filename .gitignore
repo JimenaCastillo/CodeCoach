@@ -1,0 +1,11 @@
+.env
+.env.local
+backend/build/
+backend/bin/
+*.o
+*.a
+*.so
+.DS_Store
+node_modules/
+.vscode/
+.idea/
