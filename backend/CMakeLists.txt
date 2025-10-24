@@ -4,12 +4,9 @@ project(CodeCoach)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Dependencias
-find_package(mongocxx REQUIRED)
-find_package(bsoncxx REQUIRED)
-
-# Incluir headers
+# Incluir directorios
 include_directories(include)
+include_directories(third_party/cpp-httplib)
 
 # Archivos fuente
 set(SOURCES
@@ -18,13 +15,10 @@ set(SOURCES
     src/motor_eval.cpp
     src/mongodb_manager.cpp
     src/openai_client.cpp
-)
+)   
 
 # Crear ejecutable
 add_executable(codecoach ${SOURCES})
 
-# Linkear librerías
-target_link_libraries(codecoach 
-    mongocxx 
-    bsoncxx
-)
+# Linkear libcurl para futuras peticiones HTTP
+target_link_libraries(codecoach curl)

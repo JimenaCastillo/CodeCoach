@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeCoach - Plataforma de Entrenamiento</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar con problemas -->
+        <div class="sidebar">
+            <h1>CodeCoach</h1>
+            <div class="problems-list" id="problemsList">
+                <p>Cargando problemas...</p>
+            </div>
+        </div>
+
+        <!-- Main content -->
+        <div class="main">
+            <div class="editor-section">
+                <h2 id="problemTitle">Selecciona un problema</h2>
+                <p id="problemDescription">Haz click en un problema para empezar</p>
+                
+                <div class="editor-container">
+                    <textarea id="editor" placeholder="Escribe tu código C++ aquí..." style="width: 100%; height: 100%; padding: 10px; font-family: 'Courier New', monospace; background-color: #0d1117; color: #c9d1d9; border: none; resize: none;"></textarea>
+                </div>
+
+                <button id="executeBtn" class="execute-btn">Ejecutar Código</button>
+            </div>
+
+            <!-- Results section -->
+            <div class="results-section">
+                <h3>Resultados</h3>
+                <div id="results" class="results">
+                    <p>Ejecuta tu código para ver los resultados</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="api.js"></script>
+    <script src="editor.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
