@@ -3,28 +3,35 @@
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
+#include <unistd.h>
 
 OpenAIClient::OpenAIClient(const std::string& key) 
     : apiKey(key), model("gpt-3.5-turbo") {
+    
+    // Validar API Key
+    if (apiKey.empty() || apiKey.find("sk-") != 0) {
+        throw std::runtime_error("API Key de OpenAI inválida o no configurada");
+    }
 }
 
 std::string OpenAIClient::makeRequest(const json& requestBody) {
     // Guardar request en archivo temporal
-    std::string requestFile = "/tmp/openai_request.json";
+    std::string requestFile = "/tmp/openai_request_" + std::to_string(getpid()) + ".json";
     std::ofstream file(requestFile);
     file << requestBody.dump();
     file.close();
     
-    // Construir comando curl
-    std::string curlCmd = "curl -s https://api.openai.com/v1/chat/completions "
+    // Construir comando curl con timeout de 10 segundos
+    std::string curlCmd = "curl --max-time 10 -s https://api.openai.com/v1/chat/completions "
         "-H 'Content-Type: application/json' "
         "-H 'Authorization: Bearer " + apiKey + "' "
-        "-d @" + requestFile;
+        "-d @" + requestFile + " 2>&1";
     
     // Ejecutar curl y capturar respuesta
     FILE* pipe = popen(curlCmd.c_str(), "r");
     if (!pipe) {
-        return "{\"error\": \"No se pudo conectar a OpenAI\"}";
+        system(("rm -f " + requestFile).c_str());
+        return "{\"error\": {\"message\": \"No se pudo conectar a OpenAI\"}}";
     }
     
     std::string response;
@@ -32,10 +39,19 @@ std::string OpenAIClient::makeRequest(const json& requestBody) {
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         response += buffer;
     }
-    pclose(pipe);
+    int exitCode = pclose(pipe);
     
     // Limpiar archivo temporal
     system(("rm -f " + requestFile).c_str());
+    
+    // Verificar si hubo timeout o error
+    if (exitCode != 0) {
+        return "{\"error\": {\"message\": \"Timeout o error al conectar con OpenAI\"}}";
+    }
+    
+    if (response.empty()) {
+        return "{\"error\": {\"message\": \"Respuesta vacía de OpenAI\"}}";
+    }
     
     return response;
 }
@@ -46,39 +62,54 @@ std::string OpenAIClient::generateFeedback(const std::string& code,
                                           const std::string& compilationError,
                                           const std::string& runtimeError) {
     
+    // Truncar código si es muy largo
+    std::string truncatedCode = code;
+    if (code.size() > 1000) {
+        truncatedCode = code.substr(0, 1000) + "\n... (código truncado)";
+    }
+    
     // Construir prompt
     std::string prompt = 
         "Eres un coach de programación experto. Analiza este código C++:\n\n"
-        "```cpp\n" + code + "\n```\n\n"
+        "```cpp\n" + truncatedCode + "\n```\n\n"
         "Resultados:\n"
         "- Tests pasados: " + std::to_string(testsPassed) + "\n"
         "- Tests fallidos: " + std::to_string(testsFailed) + "\n";
     
     if (!compilationError.empty()) {
-        prompt += "- Error de compilación: " + compilationError + "\n";
+        std::string truncatedError = compilationError.substr(0, 
+            std::min<size_t>(500, compilationError.size()));
+        prompt += "- Error de compilación: " + truncatedError + "\n";
     }
     
     if (!runtimeError.empty()) {
-        prompt += "- Error en tiempo de ejecución: " + runtimeError + "\n";
+        std::string truncatedError = runtimeError.substr(0, 
+            std::min<size_t>(200, runtimeError.size()));
+        prompt += "- Error en tiempo de ejecución: " + truncatedError + "\n";
     }
     
     prompt += "\nProporciona:\n"
         "1. Análisis breve del problema (1-2 líneas)\n"
-        "2. Una pista específica para arreglarlo (sin dar la solución)\n"
+        "2. Una pista específica para arreglarlo (sin dar la solución completa)\n"
         "3. Sugerencia de dónde debuggear\n\n"
-        "Responde de forma concisa (máximo 3 líneas).";
+        "Responde de forma concisa (máximo 4 líneas). Usa un tono motivador.";
     
     // Crear request JSON
     json requestBody = {
         {"model", model},
         {"messages", json::array({
             {
+                {"role", "system"},
+                {"content", "Eres un coach de programación paciente y motivador. "
+                           "Das pistas útiles sin revelar la solución completa."}
+            },
+            {
                 {"role", "user"},
                 {"content", prompt}
             }
         })},
         {"temperature", 0.7},
-        {"max_tokens", 150}
+        {"max_tokens", 200}
     };
     
     // Hacer request a OpenAI
@@ -92,12 +123,23 @@ std::string OpenAIClient::generateFeedback(const std::string& code,
             std::string message = responseJson["choices"][0]["message"]["content"];
             return message;
         } else if (responseJson.contains("error")) {
-            std::string error = responseJson["error"]["message"];
-            return "Error de OpenAI: " + error;
+            std::string errorMsg = responseJson["error"]["message"];
+            
+            // Mensajes de error amigables
+            if (errorMsg.find("rate limit") != std::string::npos) {
+                return "El servicio de feedback está temporalmente ocupado. "
+                       "Intenta nuevamente en unos segundos.";
+            } else if (errorMsg.find("invalid") != std::string::npos || 
+                      errorMsg.find("authentication") != std::string::npos) {
+                return "Error de configuración del sistema. Contacta al administrador.";
+            } else {
+                return "No se pudo obtener feedback en este momento. Error: " + errorMsg;
+            }
         }
     } catch (const std::exception& e) {
-        return "Error al procesar respuesta de OpenAI";
+        return "Error al procesar respuesta del servicio de feedback. "
+               "Por favor intenta nuevamente.";
     }
-    
-    return "No se pudo obtener feedback";
+
+    return "No se pudo obtener feedback en este momento.";
 }

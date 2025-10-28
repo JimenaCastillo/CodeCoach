@@ -25,7 +25,7 @@ async function getProblem(id) {
 }
 
 // Ejecutar código
-async function executeCode(code, testCases) {
+async function executeCode(code, testCases, problemDescription = '') {
     try {
         const response = await fetch(`${API_URL}/execute`, {
             method: 'POST',
@@ -34,7 +34,8 @@ async function executeCode(code, testCases) {
             },
             body: JSON.stringify({
                 code: code,
-                testCases: testCases
+                testCases: testCases,
+                problemDescription: problemDescription
             })
         });
         
@@ -67,6 +68,28 @@ async function getFeedback(code, testsPassed, testsFailed, compilationError, run
         });
         
         if (!response.ok) throw new Error('Error al obtener feedback');
+        return await response.json();
+    } catch (error) {
+        console.error('Error:', error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
+// Crear nuevo problema (ADMIN)
+async function createProblem(problemData) {
+    try {
+        const response = await fetch(`${API_URL}/problems`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(problemData)
+        });
+        
+        if (!response.ok) throw new Error('Error al crear problema');
         return await response.json();
     } catch (error) {
         console.error('Error:', error);
