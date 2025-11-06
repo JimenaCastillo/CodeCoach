@@ -1,0 +1,19 @@
+{
+  "id": "sudoku-hard-001",
+  "title": "Sudoku (Hard)",
+  "description": "Escribe un programa que resuelva un Sudoku rellenando las celdas vacías.\n\nEntrada:\n- Nueve líneas, cada una con nueve caracteres.\n- Cada carácter es un dígito del 1 al 9 o un punto (.) que representa una casilla vacía.\n\nSalida:\n- Nueve líneas con la cuadrícula resuelta usando solo dígitos del 1 al 9.\n- No agregues espacios adicionales. Si existieran múltiples soluciones, imprime cualquiera válida.",
+  "difficulty": "Hard",
+  "category": "Backtracking",
+  "testCases": [
+    {
+      "input": "53..7....\n6..195...\n.98....6.\n8...6...3\n4..8.3..1\n7...2...6\n.6....28.\n...419..5\n....8..79\n",
+      "expectedOutput": "534678912\n672195348\n198342567\n859761423\n426853791\n713924856\n961537284\n287419635\n345286179\n"
+    },
+    {
+      "input": "..9748...\n7........\n.2.1.9...\n..7...24.\n.64.1.59.\n.98...3..\n...8.3.2.\n........6\n...2759..\n",
+      "expectedOutput": "519748632\n783652419\n426139875\n357986241\n264317598\n198524367\n975863124\n832491756\n641275983\n"
+    }
+  ],
+  "solutionTemplate": "#include <iostream>\\n#include <vector>\\n#include <string>\\nusing namespace std;\\n\\nbool isValid(const vector<vector<char>>& board, int row, int col, char digit) {\\n    for (int i = 0; i < 9; ++i) {\\n        if (board[row][i] == digit) return false;\\n        if (board[i][col] == digit) return false;\\n        int subRow = (row / 3) * 3 + i / 3;\\n        int subCol = (col / 3) * 3 + i % 3;\\n        if (board[subRow][subCol] == digit) return false;\\n    }\\n    return true;\\n}\\n\\nbool solve(vector<vector<char>>& board, int cell = 0) {\\n    if (cell == 81) return true;\\n    int row = cell / 9;\\n    int col = cell % 9;\\n    if (board[row][col] != '.') {\\n        return solve(board, cell + 1);\\n    }\\n    for (char digit = '1'; digit <= '9'; ++digit) {\\n        if (isValid(board, row, col, digit)) {\\n            board[row][col] = digit;\\n            if (solve(board, cell + 1)) return true;\\n            board[row][col] = '.';\\n        }\\n    }\\n    return false;\\n}\\n\\nint main() {\\n    vector<vector<char>> board(9, vector<char>(9));\\n    for (int i = 0; i < 9; ++i) {\\n        string row;\\n        cin >> row;\\n        for (int j = 0; j < 9; ++j) {\\n            board[i][j] = row[j];\\n        }\\n    }\\n\\n    if (solve(board)) {\\n        for (int i = 0; i < 9; ++i) {\\n            for (int j = 0; j < 9; ++j) {\\n                cout << board[i][j];\\n            }\\n            cout << '\\n';\\n        }\\n    } else {\\n        cout << \"Sin solucion\" << '\\n';\\n    }\\n\\n    return 0;\\n}\\n",
+  "hints": "Aplica backtracking: busca una casilla vacía, prueba dígitos válidos y retrocede si no avanzas. Llevar el control de los números usados por fila, columna y subcuadrícula acelera la validación."
+}
