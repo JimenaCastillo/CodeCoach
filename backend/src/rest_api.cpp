@@ -4,7 +4,7 @@
 #include <httplib.h>
 #include <iostream>
 #include <fstream>
-#include <sstream>
+#include <vector>
 #include "openai_client.h"
 #include "motor_eval.h"
 
@@ -13,23 +13,44 @@ RestAPI::RestAPI(int port) : port(port) {
 }
 
 std::string RestAPI::loadEnvVariable(const std::string& key) {
-    std::ifstream envFile(".env");
-    std::string line;
+    // Buscar .env en múltiples ubicaciones posibles
+    std::vector<std::string> possiblePaths = {
+        ".env",                                    // Directorio actual
+        "../.env",                                 // Un nivel arriba
+        "../../.env",                              // Dos niveles arriba
+        "../../backend/.env"                       // En backend/
+    };
+    
+    std::ifstream envFile;
+    std::string envPath;
+    
+    // Intentar abrir .env desde diferentes ubicaciones
+    for (const auto& path : possiblePaths) {
+        envFile.open(path);
+        if (envFile.is_open()) {
+            envPath = path;
+            break;
+        }
+    }
     
     if (!envFile.is_open()) {
         std::cerr << "Error: No se pudo abrir .env" << std::endl;
         return "";
     }
     
+    std::string line;
+    
     while (std::getline(envFile, line)) {
         if (line.find(key) == 0) {
             size_t pos = line.find('=');
             if (pos != std::string::npos) {
+                envFile.close();
                 return line.substr(pos + 1);
             }
         }
     }
     
+    envFile.close();
     return "";
 }
 
@@ -63,21 +84,26 @@ void RestAPI::start() {
     }
     
     // Endpoint: GET /api/problems - Obtener lista de problemas
-    svr.Get("/api/problems", [dbManager](const httplib::Request& req, httplib::Response& res) {
+    svr.Get("/api/problems", [dbManager](const httplib::Request& /* req */, httplib::Response& res) {
         json response = json::array();
         
         // Intentar obtener de MongoDB
         if (dbManager) {
-            std::vector<Problem> problems = dbManager->getAllProblems();
-            
-            for (const auto& problem : problems) {
-                response.push_back({
-                    {"id", problem.id},
-                    {"title", problem.title},
-                    {"difficulty", problem.difficulty},
-                    {"category", problem.category},
-                    {"description", problem.description}
-                });
+            try {
+                std::vector<Problem> problems = dbManager->getAllProblems();
+                
+                for (const auto& problem : problems) {
+                    response.push_back({
+                        {"id", problem.id},
+                        {"title", problem.title},
+                        {"difficulty", problem.difficulty},
+                        {"category", problem.category},
+                        {"description", problem.description}
+                    });
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Error al obtener problemas de MongoDB: " << e.what() << std::endl;
+                // Continuar con fallback hardcodeado
             }
         }
         
@@ -112,10 +138,15 @@ void RestAPI::start() {
         
         // Intentar obtener de MongoDB
         if (dbManager) {
-            Problem p = dbManager->getProblem(id);
-            
-            if (!p.id.empty()) {
-                problem = p.toJson();
+            try {
+                Problem p = dbManager->getProblem(id);
+                
+                if (!p.id.empty()) {
+                    problem = p.toJson();
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Error al obtener problema de MongoDB: " << e.what() << std::endl;
+                // Continuar con fallback hardcodeado
             }
         }
         
@@ -223,8 +254,63 @@ void RestAPI::start() {
     svr.Post("/api/execute", [openaiKey](const httplib::Request& req, httplib::Response& res) {
         try {
             auto body = json::parse(req.body);
+            
+            // Validar que code existe y es string
+            if (!body.contains("code") || !body["code"].is_string()) {
+                json error = {
+                    {"success", false},
+                    {"error", "Campo 'code' es requerido y debe ser un string"}
+                };
+                res.set_header("Access-Control-Allow-Origin", "*");
+                res.set_header("Content-Type", "application/json");
+                res.set_content(error.dump(), "application/json");
+                res.status = 400;
+                return;
+            }
+            
             std::string code = body["code"];
+            
+            // Validar que code no esté vacío
+            if (code.empty()) {
+                json error = {
+                    {"success", false},
+                    {"error", "El código no puede estar vacío"}
+                };
+                res.set_header("Access-Control-Allow-Origin", "*");
+                res.set_header("Content-Type", "application/json");
+                res.set_content(error.dump(), "application/json");
+                res.status = 400;
+                return;
+            }
+            
+            // Validar que testCases existe y es array
+            if (!body.contains("testCases") || !body["testCases"].is_array()) {
+                json error = {
+                    {"success", false},
+                    {"error", "Campo 'testCases' es requerido y debe ser un array"}
+                };
+                res.set_header("Access-Control-Allow-Origin", "*");
+                res.set_header("Content-Type", "application/json");
+                res.set_content(error.dump(), "application/json");
+                res.status = 400;
+                return;
+            }
+            
             auto testCasesJson = body["testCases"];
+            
+            // Validar que testCases no esté vacío
+            if (testCasesJson.empty()) {
+                json error = {
+                    {"success", false},
+                    {"error", "Debe proporcionar al menos un test case"}
+                };
+                res.set_header("Access-Control-Allow-Origin", "*");
+                res.set_header("Content-Type", "application/json");
+                res.set_content(error.dump(), "application/json");
+                res.status = 400;
+                return;
+            }
+            
             std::string problemDescription = body.value("problemDescription", "");
             
             // Validación de tamaño
@@ -233,6 +319,7 @@ void RestAPI::start() {
                     {"success", false},
                     {"error", "Código demasiado largo (máximo 50KB)"}
                 };
+                res.set_header("Access-Control-Allow-Origin", "*");
                 res.set_header("Content-Type", "application/json");
                 res.set_content(error.dump(), "application/json");
                 res.status = 400;
@@ -242,6 +329,19 @@ void RestAPI::start() {
             // Convertir JSON a vector de TestCase
             std::vector<TestCase> testCases;
             for (const auto& tc : testCasesJson) {
+                // Validar que cada testCase tenga input y expectedOutput
+                if (!tc.contains("input") || !tc.contains("expectedOutput")) {
+                    json error = {
+                        {"success", false},
+                        {"error", "Cada test case debe tener 'input' y 'expectedOutput'"}
+                    };
+                    res.set_header("Access-Control-Allow-Origin", "*");
+                    res.set_header("Content-Type", "application/json");
+                    res.set_content(error.dump(), "application/json");
+                    res.status = 400;
+                    return;
+                }
+                
                 TestCase test;
                 test.input = tc["input"].get<std::string>();
                 test.expectedOutput = tc["expectedOutput"].get<std::string>();
@@ -252,14 +352,26 @@ void RestAPI::start() {
             MotorEval evaluator(5); // 5 segundos timeout
             EvaluationResult result = evaluator.evaluate(code, testCases);
             
-            // Análisis de complejidad
-            SolutionAnalyzer analyzer(openaiKey);
-            CodeAnalysis analysis = analyzer.analyze(
-                code, 
-                problemDescription,
-                result.testsPassed, 
-                result.testsFailed
-            );
+            // Análisis de complejidad (opcional, puede fallar)
+            CodeAnalysis analysis;
+            try {
+                if (!code.empty()) {
+                    SolutionAnalyzer analyzer(openaiKey);
+                    analysis = analyzer.analyze(
+                        code, 
+                        problemDescription,
+                        result.testsPassed, 
+                        result.testsFailed
+                    );
+                }
+            } catch (const std::exception& ex) {
+                // Si falla el análisis, continuar sin él
+                std::cerr << "Advertencia: Error en análisis de complejidad: " << ex.what() << std::endl;
+                analysis.complexity.timeComplexity = "N/A";
+                analysis.complexity.spaceComplexity = "N/A";
+                analysis.complexity.confidence = "low";
+                analysis.complexity.explanation = "No se pudo analizar la complejidad";
+            }
             
             // Construir respuesta con análisis
             json response = {
@@ -310,9 +422,64 @@ void RestAPI::start() {
     svr.Post("/api/feedback", [openaiKey](const httplib::Request& req, httplib::Response& res) {
         try {
             auto body = json::parse(req.body);
+            
+            // Validar que code existe
+            if (!body.contains("code") || !body["code"].is_string()) {
+                json error = {
+                    {"success", false},
+                    {"error", "Campo 'code' es requerido y debe ser un string"}
+                };
+                res.set_header("Access-Control-Allow-Origin", "*");
+                res.set_header("Content-Type", "application/json");
+                res.set_content(error.dump(), "application/json");
+                res.status = 400;
+                return;
+            }
+            
             std::string code = body["code"];
+            
+            // Validar que testsPassed existe y es número
+            if (!body.contains("testsPassed") || !body["testsPassed"].is_number_integer()) {
+                json error = {
+                    {"success", false},
+                    {"error", "Campo 'testsPassed' es requerido y debe ser un número"}
+                };
+                res.set_header("Access-Control-Allow-Origin", "*");
+                res.set_header("Content-Type", "application/json");
+                res.set_content(error.dump(), "application/json");
+                res.status = 400;
+                return;
+            }
+            
+            // Validar que testsFailed existe y es número
+            if (!body.contains("testsFailed") || !body["testsFailed"].is_number_integer()) {
+                json error = {
+                    {"success", false},
+                    {"error", "Campo 'testsFailed' es requerido y debe ser un número"}
+                };
+                res.set_header("Access-Control-Allow-Origin", "*");
+                res.set_header("Content-Type", "application/json");
+                res.set_content(error.dump(), "application/json");
+                res.status = 400;
+                return;
+            }
+            
             int testsPassed = body["testsPassed"];
             int testsFailed = body["testsFailed"];
+            
+            // Validar que los valores sean >= 0
+            if (testsPassed < 0 || testsFailed < 0) {
+                json error = {
+                    {"success", false},
+                    {"error", "testsPassed y testsFailed deben ser >= 0"}
+                };
+                res.set_header("Access-Control-Allow-Origin", "*");
+                res.set_header("Content-Type", "application/json");
+                res.set_content(error.dump(), "application/json");
+                res.status = 400;
+                return;
+            }
+            
             std::string compilationError = body.value("compilationError", "");
             std::string runtimeError = body.value("runtimeError", "");
             
@@ -367,8 +534,20 @@ void RestAPI::start() {
             {"status", "ok"},
             {"mongodb", dbManager != nullptr ? "connected" : "disconnected"}
         };
+        res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Content-Type", "application/json");
         res.set_content(health.dump(), "application/json");
+    });
+    
+    // Manejo de errores global
+    svr.set_error_handler([](const httplib::Request&, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Content-Type", "application/json");
+        json error = {
+            {"error", "Error interno del servidor"},
+            {"status", res.status}
+        };
+        res.set_content(error.dump(), "application/json");
     });
     
     std::cout << "🚀 CodeCoach Backend iniciando en puerto " << port << std::endl;

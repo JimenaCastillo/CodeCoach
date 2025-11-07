@@ -1,13 +1,10 @@
 #include "motor_eval.h"
-#include <iostream>
 #include <fstream>
-#include <sstream>
 #include <cstdlib>
 #include <unistd.h>
 #include <chrono>
 #include <sys/wait.h>
-#include <signal.h>
-#include <algorithm>
+#include <sys/stat.h>
 
 MotorEval::MotorEval(int timeout) : timeoutSeconds(timeout) {
     tempDir = "/tmp/codecoach_temp_";
@@ -81,6 +78,17 @@ std::string MotorEval::compileCpp(const std::string& code) {
 
 std::string MotorEval::executeProgram(const std::string& execPath, 
                                       const std::string& input) {
+    // Validar que el ejecutable existe
+    struct stat buffer;
+    if (stat(execPath.c_str(), &buffer) != 0) {
+        return "Error: El ejecutable no existe: " + execPath;
+    }
+    
+    // Validar permisos de ejecución
+    if ((buffer.st_mode & S_IXUSR) == 0) {
+        return "Error: El ejecutable no tiene permisos de ejecución";
+    }
+    
     std::string output;
     std::string inputFile = tempDir + "/input.txt";
     std::string outputFile = tempDir + "/output.txt";
@@ -160,6 +168,23 @@ EvaluationResult MotorEval::evaluate(const std::string& userCode,
     
     // Ejecutar test cases
     std::string execPath = tempDir + "/code";
+    
+    // Validar que el ejecutable existe antes de ejecutar
+    struct stat buffer;
+    if (stat(execPath.c_str(), &buffer) != 0) {
+        result.success = false;
+        result.compilationError = "Error: El ejecutable no se generó correctamente";
+        result.testsFailed = testCases.size();
+        return result;
+    }
+    
+    // Validar permisos de ejecución
+    if ((buffer.st_mode & S_IXUSR) == 0) {
+        result.success = false;
+        result.compilationError = "Error: El ejecutable no tiene permisos de ejecución";
+        result.testsFailed = testCases.size();
+        return result;
+    }
     
     for (const auto& testCase : testCases) {
         std::string output = executeProgram(execPath, testCase.input);
