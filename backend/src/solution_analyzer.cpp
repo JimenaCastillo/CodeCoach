@@ -1,5 +1,4 @@
 #include "solution_analyzer.h"
-#include <iostream>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -258,6 +257,16 @@ ComplexityAnalysis SolutionAnalyzer::estimateComplexity(const std::string& code)
 }
 
 std::string SolutionAnalyzer::makeLLMRequest(const std::string& prompt) {
+    // Validar que prompt no esté vacío
+    if (prompt.empty()) {
+        return "";
+    }
+    
+    // Validar que openAIKey no esté vacío
+    if (openAIKey.empty()) {
+        return "";
+    }
+    
     // Similar a OpenAIClient pero enfocado en análisis
     std::string requestFile = "/tmp/analyzer_request_" + std::to_string(getpid()) + ".json";
     
@@ -266,7 +275,8 @@ std::string SolutionAnalyzer::makeLLMRequest(const std::string& prompt) {
         {"messages", json::array({
             {
                 {"role", "system"},
-                {"content", "Eres un experto en análisis de algoritmos y complejidad computacional."}
+                {"content", "Eres un experto en análisis de algoritmos y complejidad computacional. "
+                           "Siempre responde en ESPAÑOL LATINOAMERICANO. Usa un lenguaje técnico pero natural de Latinoamérica."}
             },
             {
                 {"role", "user"},
@@ -319,6 +329,19 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
                                        int testsFailed) {
     CodeAnalysis analysis;
     
+    // Validar entrada
+    if (code.empty()) {
+        analysis.complexity.timeComplexity = "N/A";
+        analysis.complexity.spaceComplexity = "N/A";
+        analysis.complexity.confidence = "low";
+        analysis.complexity.explanation = "Código vacío";
+        return analysis;
+    }
+    
+    // Validar que los valores de tests sean >= 0
+    if (testsPassed < 0) testsPassed = 0;
+    if (testsFailed < 0) testsFailed = 0;
+    
     // 1. Análisis estático
     analysis.complexity = estimateComplexity(code);
     analysis.dataStructures = detectDataStructures(code);
@@ -329,6 +352,7 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
         std::string truncatedCode = code.substr(0, std::min<size_t>(800, code.size()));
         
         std::string prompt = 
+            "IMPORTANTE: Responde EN ESPAÑOL LATINOAMERICANO. Usa un lenguaje técnico pero natural de Latinoamérica."
             "Analiza este código C++ y proporciona:\n"
             "1. Complejidad temporal (Big O)\n"
             "2. Complejidad espacial\n"
@@ -337,8 +361,7 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
             "Problema: " + problemDescription + "\n\n"
             "Código:\n```cpp\n" + truncatedCode + "\n```\n\n"
             "Tests pasados: " + std::to_string(testsPassed) + "\n"
-            "Tests fallidos: " + std::to_string(testsFailed) + "\n\n"
-            "Responde en formato conciso (máximo 5 líneas).";
+            "Tests fallidos: " + std::to_string(testsFailed) + "\n\n";
         
         std::string llmResponse = makeLLMRequest(prompt);
         

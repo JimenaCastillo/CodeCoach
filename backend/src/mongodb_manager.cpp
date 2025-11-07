@@ -4,7 +4,6 @@
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
-#include <algorithm>
 #include <unistd.h>
 
 // Implementación de Problem
@@ -107,6 +106,15 @@ std::string MongoDBManager::executeMongoCommand(const std::string& command) {
 
 json MongoDBManager::parseMongoResponse(const std::string& response) {
     try {
+        // Verificar si hay errores de conexión antes de parsear
+        if (response.find("MongoServerSelectionError") != std::string::npos ||
+            response.find("Network Access List") != std::string::npos ||
+            response.find("authentication failed") != std::string::npos ||
+            response.find("SSL") != std::string::npos) {
+            // Retornar error estructurado
+            return json{{"error", "Error de conexión a MongoDB. Verifica la Network Access List en MongoDB Atlas."}};
+        }
+        
         // Limpiar la respuesta (remover líneas de log de mongosh)
         std::string cleaned;
         std::istringstream iss(response);
@@ -140,9 +148,18 @@ json MongoDBManager::parseMongoResponse(const std::string& response) {
 bool MongoDBManager::testConnection() {
     std::string command = 
         "db = db.getSiblingDB('" + databaseName + "'); "
-        "printjson({success: true, database: db.getName()});";
+        "print(EJSON.stringify({success: true, database: db.getName()}));";
     
     std::string response = executeMongoCommand(command);
+    
+    // Verificar si hay errores de conexión en la respuesta
+    if (response.find("MongoServerSelectionError") != std::string::npos ||
+        response.find("Network Access List") != std::string::npos ||
+        response.find("authentication failed") != std::string::npos) {
+        std::cerr << "Error de conexión a MongoDB: " << response << std::endl;
+        return false;
+    }
+    
     json result = parseMongoResponse(response);
     
     return result.value("success", false);
@@ -152,7 +169,7 @@ int MongoDBManager::getProblemsCount() {
     std::string command = 
         "db = db.getSiblingDB('" + databaseName + "'); "
         "count = db." + collectionName + ".countDocuments(); "
-        "printjson({count: count});";
+        "print(EJSON.stringify({count: count}));";
     
     std::string response = executeMongoCommand(command);
     json result = parseMongoResponse(response);
@@ -161,12 +178,18 @@ int MongoDBManager::getProblemsCount() {
 }
 
 bool MongoDBManager::createProblem(const Problem& problem) {
+    // Validar que el problema tenga campos requeridos
+    if (problem.id.empty() || problem.title.empty()) {
+        std::cerr << "Error: El problema debe tener id y title" << std::endl;
+        return false;
+    }
+    
     json problemJson = problem.toJson();
     
     std::string command = 
         "db = db.getSiblingDB('" + databaseName + "'); "
         "result = db." + collectionName + ".insertOne(" + problemJson.dump() + "); "
-        "printjson({success: result.acknowledged});";
+        "print(EJSON.stringify({success: result.acknowledged}));";
     
     std::string response = executeMongoCommand(command);
     json result = parseMongoResponse(response);
@@ -178,7 +201,7 @@ Problem MongoDBManager::getProblem(const std::string& id) {
     std::string command = 
         "db = db.getSiblingDB('" + databaseName + "'); "
         "doc = db." + collectionName + ".findOne({id: '" + id + "'}); "
-        "printjson(doc);";
+        "print(EJSON.stringify(doc));";
     
     std::string response = executeMongoCommand(command);
     json result = parseMongoResponse(response);
@@ -194,7 +217,7 @@ std::vector<Problem> MongoDBManager::getAllProblems() {
     std::string command = 
         "db = db.getSiblingDB('" + databaseName + "'); "
         "docs = db." + collectionName + ".find().toArray(); "
-        "printjson(docs);";
+        "print(EJSON.stringify(docs));";
     
     std::string response = executeMongoCommand(command);
     json result = parseMongoResponse(response);
@@ -214,7 +237,7 @@ std::vector<Problem> MongoDBManager::getProblemsByCategory(const std::string& ca
     std::string command = 
         "db = db.getSiblingDB('" + databaseName + "'); "
         "docs = db." + collectionName + ".find({category: '" + category + "'}).toArray(); "
-        "printjson(docs);";
+        "print(EJSON.stringify(docs));";
     
     std::string response = executeMongoCommand(command);
     json result = parseMongoResponse(response);
@@ -234,7 +257,7 @@ std::vector<Problem> MongoDBManager::getProblemsByDifficulty(const std::string& 
     std::string command = 
         "db = db.getSiblingDB('" + databaseName + "'); "
         "docs = db." + collectionName + ".find({difficulty: '" + difficulty + "'}).toArray(); "
-        "printjson(docs);";
+        "print(EJSON.stringify(docs));";
     
     std::string response = executeMongoCommand(command);
     json result = parseMongoResponse(response);
@@ -258,7 +281,7 @@ bool MongoDBManager::updateProblem(const std::string& id, const Problem& problem
         "result = db." + collectionName + ".updateOne("
         "{id: '" + id + "'}, "
         "{$set: " + problemJson.dump() + "}); "
-        "printjson({success: result.modifiedCount > 0});";
+        "print(EJSON.stringify({success: result.modifiedCount > 0}));";
     
     std::string response = executeMongoCommand(command);
     json result = parseMongoResponse(response);
@@ -270,7 +293,7 @@ bool MongoDBManager::deleteProblem(const std::string& id) {
     std::string command = 
         "db = db.getSiblingDB('" + databaseName + "'); "
         "result = db." + collectionName + ".deleteOne({id: '" + id + "'}); "
-        "printjson({success: result.deletedCount > 0});";
+        "print(EJSON.stringify({success: result.deletedCount > 0}));";
     
     std::string response = executeMongoCommand(command);
     json result = parseMongoResponse(response);

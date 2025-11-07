@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 project(CodeCoach)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -6,10 +7,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Flags de compilación
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
-
-# Incluir directorios
-include_directories(include)
-include_directories(third_party/cpp-httplib)
 
 # Archivos fuente
 set(SOURCES
@@ -23,6 +20,12 @@ set(SOURCES
 
 # Crear ejecutable
 add_executable(codecoach ${SOURCES})
+
+# Incluir directorios
+target_include_directories(codecoach PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cpp-httplib
+)
 
 # Linkear librerías
 target_link_libraries(codecoach curl pthread)

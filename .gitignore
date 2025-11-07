@@ -9,3 +9,4 @@ backend/bin/
 node_modules/
 .vscode/
 .idea/
+backend/.cache/
