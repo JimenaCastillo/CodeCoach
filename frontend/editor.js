@@ -1,10 +1,19 @@
 let editor;
+const USER_BLOCK_START = '// === BEGIN USER CODE ===';
+const USER_BLOCK_END = '// === END USER CODE ===';
 
 // Inicializar editor (simple textarea)
 document.addEventListener('DOMContentLoaded', function() {
     editor = document.getElementById('editor');
     if (editor) {
-        editor.value = '#include <iostream>\nint main() {\n    std::cout << "Hello, World!";\n    return 0;\n}';
+        editor.value =
+`#include <iostream>
+int main() {
+    ${USER_BLOCK_START}
+    std::cout << "Hello, World!";
+    ${USER_BLOCK_END}
+    return 0;
+}`;
     }
 });
 
@@ -22,5 +31,12 @@ function setEditorCode(code) {
 
 // Limpiar editor
 function clearEditor() {
-    setEditorCode('#include <iostream>\nint main() {\n    // Tu código aquí\n    return 0;\n}');
+    setEditorCode(
+`#include <iostream>
+int main() {
+    ${USER_BLOCK_START}
+    // Tu código aquí
+    ${USER_BLOCK_END}
+    return 0;
+}`);
 }

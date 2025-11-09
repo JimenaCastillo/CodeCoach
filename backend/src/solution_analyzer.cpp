@@ -3,58 +3,639 @@
 #include <sstream>
 #include <algorithm>
 #include <regex>
+#include <set>
+#include <vector>
 #include <unistd.h>
+#include <cctype>
+#include <cstdio>
+#include <unordered_map> // CHANGE: Cache sanitized fragments to avoid repeated cleaning passes.
+
+namespace {
+
+// CHANGE: Centralized IO markers allow harness trimming and helper filtering rules.
+const std::vector<std::string>& ioTokens() {
+    static const std::vector<std::string> tokens = {
+        "cin", "cout", "scanf", "printf", "getline", "puts", "putchar",
+        "getchar", "fscanf", "fprintf", "read", "write", "ios::sync_with_stdio",
+        "tie", "endl", "flush", "istream", "ostream", "fastio"
+    };
+    return tokens;
+}
+
+// CHANGE: Extended ignore keywords to capture additional template helpers.
+const std::vector<std::string>& ignoreKeywords() {
+    static const std::vector<std::string> keywords = {
+        "parse", "reader", "writer", "read", "print", "input", "output", "write",
+        "scan", "display", "log", "debug", "format", "helper", "util", "token",
+        "split", "join", "validator", "validate", "check", "ensure", "load",
+        "save", "driver", "runner", "harness", "sanitize", "bracket", "comma",
+        "mock", "stub", "adapter", "manager", "service", "controller", "io",
+        "fast", "stream", "buffer", "serializer"
+    };
+    return keywords;
+}
+
+// CHANGE: Utility trim to confirm whether a snippet still has meaningful content.
+std::string trimSnippet(const std::string& text) {
+    size_t start = text.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) {
+        return "";
+    }
+    size_t end = text.find_last_not_of(" \t\r\n");
+    return text.substr(start, end - start + 1);
+}
+
+inline bool isWordBoundary(const std::string& text, size_t pos) {
+    return pos >= text.size() || (!(std::isalnum(static_cast<unsigned char>(text[pos])) || text[pos] == '_'));
+}
+
+bool startsWithWord(const std::string& text, size_t pos, const std::string& word) {
+    if (pos + word.size() > text.size()) {
+        return false;
+    }
+    if (text.compare(pos, word.size(), word) != 0) {
+        return false;
+    }
+    bool leftOK = (pos == 0) || isWordBoundary(text, pos - 1);
+    bool rightOK = isWordBoundary(text, pos + word.size());
+    return leftOK && rightOK;
+}
+
+size_t skipWhitespace(const std::string& text, size_t pos) {
+    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
+        ++pos;
+    }
+    return pos;
+}
+
+size_t findMatching(const std::string& text, size_t start, char openChar, char closeChar) {
+    if (start >= text.size() || text[start] != openChar) {
+        return std::string::npos;
+    }
+    int depth = 1;
+    for (size_t i = start + 1; i < text.size(); ++i) {
+        char c = text[i];
+        if (c == openChar) {
+            ++depth;
+        } else if (c == closeChar) {
+            --depth;
+            if (depth == 0) {
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
+size_t findStatementEnd(const std::string& text, size_t start) {
+    int paren = 0;
+    int brace = 0;
+    int bracket = 0;
+    for (size_t i = start; i < text.size(); ++i) {
+        char c = text[i];
+        if (c == ';' && paren == 0 && brace == 0 && bracket == 0) {
+            return i + 1;
+        }
+        if (c == '(') ++paren;
+        else if (c == ')') --paren;
+        else if (c == '{') ++brace;
+        else if (c == '}') --brace;
+        else if (c == '[') ++bracket;
+        else if (c == ']') --bracket;
+    }
+    return text.size();
+}
+
+} // namespace
 
 SolutionAnalyzer::SolutionAnalyzer(const std::string& apiKey) 
     : openAIKey(apiKey) {
 }
 
-int SolutionAnalyzer::countNestedLoops(const std::string& code) {
-    int maxNesting = 0;
-    int currentNesting = 0;
+// ========== HELPER PRIVADO: Limpiar código de comentarios y strings ==========
+std::string SolutionAnalyzer::cleanCode(const std::string& code) {
+    // CHANGE: Preserve literals/operators and only neutralize comment characters.
+    std::string cleaned;
+    cleaned.reserve(code.size());
     
-    // Buscar for, while, do-while
-    std::regex loopRegex(R"(\b(for|while)\s*\()");
+    bool inString = false;
+    bool inLineComment = false;
+    bool inBlockComment = false;
+    bool escape = false;
+    char stringChar = '\0';
     
-    std::istringstream iss(code);
-    std::string line;
-    
-    while (std::getline(iss, line)) {
-        // Contar aperturas de loops
-        auto words_begin = std::sregex_iterator(line.begin(), line.end(), loopRegex);
-        auto words_end = std::sregex_iterator();
-        currentNesting += std::distance(words_begin, words_end);
+    for (size_t i = 0; i < code.size(); ++i) {
+        char c = code[i];
+        char next = (i + 1 < code.size()) ? code[i + 1] : '\0';
         
-        // Contar llaves de cierre
-        for (char c : line) {
-            if (c == '{') currentNesting++;
-            if (c == '}') currentNesting--;
+        if (inLineComment) {
+            cleaned += (c == '\n') ? '\n' : ' ';
+            if (c == '\n') {
+                inLineComment = false;
+            }
+            continue;
         }
         
-        maxNesting = std::max(maxNesting, currentNesting);
+        if (inBlockComment) {
+            cleaned += (c == '\n') ? '\n' : ' ';
+            if (c == '*' && next == '/') {
+                cleaned.back() = ' ';
+                cleaned += ' ';
+                ++i;
+                inBlockComment = false;
+            }
+            continue;
+        }
+        
+        if (!inString && c == '/' && next == '/') {
+            cleaned += ' ';
+            cleaned += ' ';
+            ++i;
+            inLineComment = true;
+            continue;
+        }
+        
+        if (!inString && c == '/' && next == '*') {
+            cleaned += ' ';
+            cleaned += ' ';
+            ++i;
+            inBlockComment = true;
+            continue;
+        }
+        
+        cleaned += c;
+        
+        if ((c == '"' || c == '\'') && !escape) {
+            if (inString && c == stringChar) {
+                inString = false;
+            } else if (!inString) {
+                inString = true;
+                stringChar = c;
+            }
+        }
+        
+        if (inString && c == '\\' && !escape) {
+            escape = true;
+        } else {
+            escape = false;
+        }
     }
     
-    return maxNesting;
+    return cleaned;
 }
 
-bool SolutionAnalyzer::containsRecursion(const std::string& code) {
-    // Buscar patrones de recursión (función que se llama a sí misma)
-    std::regex funcRegex(R"(\w+\s+(\w+)\s*\([^)]*\)\s*\{)");
-    std::smatch match;
-    
-    std::string codeStr = code;
-    std::vector<std::string> functionNames;
-    
-    // Extraer nombres de funciones
-    while (std::regex_search(codeStr, match, funcRegex)) {
-        functionNames.push_back(match[1]);
-        codeStr = match.suffix();
+const std::string& SolutionAnalyzer::getCleaned(const std::string& code) {
+    // CHANGE: Memoize sanitized fragments to ensure we only clean each snippet once.
+    auto it = cleanCache.find(code);
+    if (it != cleanCache.end()) {
+        return it->second;
     }
     
-    // Buscar si alguna función se llama a sí misma
-    for (const auto& funcName : functionNames) {
-        std::regex callRegex(funcName + R"(\s*\()");
-        if (std::regex_search(code, callRegex)) {
+    auto inserted = cleanCache.emplace(code, std::string{});
+    inserted.first->second = cleanCode(code);
+    return inserted.first->second;
+}
+
+bool SolutionAnalyzer::detectLogarithmicUpdate(const std::string& text) const {
+    static const std::regex divideAssign(R"(\b\w+\s*/=\s*(2|\w+\s*>>\s*1))");
+    static const std::regex halveAssign(R"(\b\w+\s*=\s*\w+\s*/\s*2)");
+    static const std::regex shiftAssign(R"(\b\w+\s*>>=\s*1)" );
+    if (std::regex_search(text, divideAssign) ||
+        std::regex_search(text, halveAssign) ||
+        std::regex_search(text, shiftAssign)) {
+        return true;
+    }
+    if (text.find("mid") != std::string::npos &&
+        (text.find("left = mid") != std::string::npos ||
+         text.find("right = mid") != std::string::npos)) {
+        return true;
+    }
+    return false;
+}
+
+bool SolutionAnalyzer::detectOppositePointerMovement(const std::string& loopBody) const {
+    auto containsAny = [](const std::string& haystack, const std::vector<std::string>& needles) {
+        for (const auto& token : needles) {
+            if (haystack.find(token) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    };
+    bool incLeft = containsAny(loopBody, {"left++", "++left", "left += 1", "left +=1", "left = left + 1"});
+    bool decRight = containsAny(loopBody, {"right--", "--right", "right -= 1", "right -=1", "right = right - 1"});
+    bool incSlow = containsAny(loopBody, {"slow++", "++slow", "slow += 1"});
+    bool incFastTwice = containsAny(loopBody, {"fast += 2", "fast +=2", "fast = fast + 2", "fast++", "++fast"});
+    return (incLeft && decRight) || (incSlow && incFastTwice);
+}
+
+bool SolutionAnalyzer::detectPointerStopCondition(const std::string& loopHeader) const {
+    static const std::vector<std::string> conditions = {
+        "left < right", "left <= right", "right > left", "right >= left",
+        "slow != fast", "fast != slow", "slow < fast", "fast < slow"
+    };
+    for (const auto& cond : conditions) {
+        if (loopHeader.find(cond) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SolutionAnalyzer::detectMultiplicativeUpdate(const std::string& loopBody) const {
+    static const std::regex multAssign(R"(\b\w+\s*=\s*\w+\s*[*\/])");
+    static const std::regex mulPattern(R"(\b\w+\s*[*]\s*\w+)");
+    static const std::regex divAssign(R"([/]=)" );
+    return loopBody.find("*=") != std::string::npos ||
+           loopBody.find("/=") != std::string::npos ||
+           std::regex_search(loopBody, multAssign) ||
+           std::regex_search(loopBody, mulPattern) ||
+           std::regex_search(loopBody, divAssign);
+}
+
+bool SolutionAnalyzer::detectModuloUsage(const std::string& loopBody) const {
+    return loopBody.find('%') != std::string::npos;
+}
+
+bool SolutionAnalyzer::detectPowerOperation(const std::string& loopBody) const {
+    return loopBody.find("pow(") != std::string::npos ||
+           loopBody.find("std::pow") != std::string::npos ||
+           loopBody.find("**") != std::string::npos ||
+           loopBody.find("^=") != std::string::npos;
+}
+
+bool SolutionAnalyzer::detectBinarySearchPattern(const std::string& loopText) const {
+    bool hasMid = loopText.find("mid") != std::string::npos;
+    bool updatesLeft = loopText.find("left = mid") != std::string::npos ||
+                       loopText.find("left = mid + 1") != std::string::npos ||
+                       loopText.find("left = mid+1") != std::string::npos;
+    bool updatesRight = loopText.find("right = mid") != std::string::npos ||
+                        loopText.find("right = mid - 1") != std::string::npos ||
+                        loopText.find("right = mid-1") != std::string::npos;
+    return hasMid && updatesLeft && updatesRight;
+}
+
+bool SolutionAnalyzer::detectSortingInLoop(const std::string& loopBody) const {
+    return loopBody.find("sort(") != std::string::npos ||
+           loopBody.find("std::sort") != std::string::npos ||
+           loopBody.find("stable_sort") != std::string::npos;
+}
+
+bool SolutionAnalyzer::detectHashStructure(const std::string& loopBody) const {
+    static const std::vector<std::string> tokens = {
+        "unordered_map", "std::unordered_map", "unordered_set", "std::unordered_set",
+        "std::map", "std::set", "map<", "set<"
+    };
+    for (const auto& token : tokens) {
+        if (loopBody.find(token) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SolutionAnalyzer::detectMemoization(const std::string& code) const {
+    static const std::vector<std::regex> memoPatterns = {
+        std::regex(R"(\bmemo\b)"),
+        std::regex(R"(\bdp\b)"),
+        std::regex(R"(\bcache\b)"),
+        std::regex(R"(\blookup\b)"),
+        std::regex(R"(\bvisited\b)")
+    };
+    for (const auto& pattern : memoPatterns) {
+        if (std::regex_search(code, pattern)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SolutionAnalyzer::hasTwoPointerVariables(const std::string& loopBody) const {
+    bool hasLeftRight = loopBody.find("left") != std::string::npos &&
+                        loopBody.find("right") != std::string::npos;
+    bool hasSlowFast = loopBody.find("slow") != std::string::npos &&
+                       loopBody.find("fast") != std::string::npos;
+    return hasLeftRight || hasSlowFast;
+}
+
+std::string SolutionAnalyzer::extractRelevantCode(const std::string& code) {
+    // CHANGE: Track snippet status to flag harness-only submissions.
+    lastSnippetStatus = AnalysisStatus::OK;
+    
+    if (code.empty()) {
+        lastSnippetStatus = AnalysisStatus::NoUserCode;
+        return {};
+    }
+
+    std::string cleaned = cleanCode(code);
+    
+    auto toLower = [](const std::string& text) {
+        std::string lower;
+        lower.reserve(text.size());
+        for (char c : text) {
+            lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+        return lower;
+    };
+
+    struct FunctionBlock {
+        std::string name;
+        size_t signaturePos = 0;
+        size_t bodyStart = 0;
+        size_t bodyEnd = 0;
+        bool hasIO = false;
+    };
+
+    auto rangeContainsIO = [&](size_t start, size_t end) {
+        for (const auto& marker : ioTokens()) {
+            size_t pos = cleaned.find(marker, start);
+            while (pos != std::string::npos && pos < end) {
+                bool before = (pos > 0) && std::isalnum(static_cast<unsigned char>(cleaned[pos - 1]));
+                bool after = (pos + marker.size() < cleaned.size()) &&
+                             std::isalnum(static_cast<unsigned char>(cleaned[pos + marker.size()]));
+                if (!before && !after) {
+                    return true;
+                }
+                pos = cleaned.find(marker, pos + marker.size());
+            }
+        }
+        return false;
+    };
+
+    std::vector<FunctionBlock> functions;
+    std::regex funcRegex(R"((?:^|\s)([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const)?\s*\{)");
+    for (std::sregex_iterator it(cleaned.begin(), cleaned.end(), funcRegex), end;
+         it != end; ++it) {
+        const std::smatch& match = *it;
+        std::string funcName = match[1].str();
+
+        if (funcName == "if" || funcName == "for" || funcName == "while" ||
+            funcName == "switch" || funcName == "catch" || funcName == "else") {
+            continue;
+        }
+
+        size_t signaturePos = static_cast<size_t>(match.position());
+        size_t bodyStart = signaturePos + match.length();
+        int braceDepth = 1;
+        size_t pos = bodyStart;
+        while (pos < cleaned.size() && braceDepth > 0) {
+            if (cleaned[pos] == '{') {
+                ++braceDepth;
+            } else if (cleaned[pos] == '}') {
+                --braceDepth;
+            }
+            ++pos;
+        }
+
+        functions.push_back(FunctionBlock{
+            funcName,
+            signaturePos,
+            bodyStart,
+            std::min(pos, cleaned.size()),
+            rangeContainsIO(bodyStart, std::min(pos, cleaned.size()))
+        });
+    }
+
+    const FunctionBlock* mainBlock = nullptr;
+    for (const auto& fn : functions) {
+        if (fn.name == "main") {
+            mainBlock = &fn;
+            break;
+        }
+    }
+
+    auto advancePastMarker = [&](size_t markerPos, size_t markerLen) {
+        size_t newlinePos = code.find('\n', markerPos);
+        if (newlinePos == std::string::npos) {
+            return std::min(code.size(), markerPos + markerLen);
+        }
+        return std::min(code.size(), newlinePos + 1);
+    };
+
+    struct EditableRegion {
+        size_t start = 0;
+        size_t end = 0;
+        bool valid = false;
+        
+        bool isValid() const {
+            return valid && end > start;
+        }
+    };
+
+    auto locateEditableRegion = [&]() -> EditableRegion {
+        std::string lowerCode = toLower(code);
+        
+        const std::vector<std::pair<std::string, std::string>> markerPairs = {
+            {"// === BEGIN USER CODE ===", "// === END USER CODE ==="},
+            {"// BEGIN-STUDENT-CODE", "// END-STUDENT-CODE"},
+            {"// BEGIN USER CODE", "// END USER CODE"},
+            {"/* BEGIN STUDENT CODE */", "/* END STUDENT CODE */"},
+            {"/* BEGIN USER CODE */", "/* END USER CODE */"},
+        };
+
+        for (const auto& pair : markerPairs) {
+            std::string startLower = toLower(pair.first);
+            std::string endLower = toLower(pair.second);
+            size_t startPos = lowerCode.find(startLower);
+            if (startPos == std::string::npos) {
+                continue;
+            }
+            size_t endPos = lowerCode.find(endLower, startPos + startLower.size());
+            size_t regionStart = advancePastMarker(startPos, startLower.size());
+            size_t regionEnd = (endPos == std::string::npos) ? code.size() : endPos;
+            if (regionEnd > regionStart) {
+                return {regionStart, regionEnd, true};
+            }
+        }
+
+        const std::vector<std::string> singleMarkers = {
+            "// tu código aquí",
+            "// tu codigo aqui",
+            "// escribe tu código aquí",
+            "// escribe tu codigo aqui",
+            "// write your code here",
+            "// begin solution",
+            "// begin student code"
+        };
+
+        for (const auto& marker : singleMarkers) {
+            std::string markerLower = toLower(marker);
+            size_t markerPos = lowerCode.find(markerLower);
+            if (markerPos == std::string::npos) {
+                continue;
+            }
+            size_t regionStart = advancePastMarker(markerPos, markerLower.size());
+            size_t regionEnd = code.size();
+            for (const auto& fn : functions) {
+                if (fn.bodyStart <= regionStart && regionStart < fn.bodyEnd) {
+                    regionEnd = fn.bodyEnd - 1;
+                    break;
+                }
+            }
+            if (regionEnd > regionStart) {
+                return {regionStart, regionEnd, true};
+            }
+        }
+
+        return {};
+    };
+
+    EditableRegion userRegion = locateEditableRegion();
+    
+    auto sliceRegion = [&](const EditableRegion& region) -> std::string {
+        if (!region.isValid()) {
+            return "";
+        }
+        size_t start = std::min(region.start, code.size());
+        size_t end = std::min(region.end, code.size());
+        if (end <= start) {
+            return "";
+        }
+        return code.substr(start, end - start);
+    };
+
+    std::string snippet = trimSnippet(sliceRegion(userRegion));
+    std::set<std::string> includedFunctions;
+
+    auto shouldIgnoreFunction = [&](const FunctionBlock& fn) {
+        std::string lower = toLower(fn.name);
+        for (const auto& keyword : ignoreKeywords()) {
+            if (lower.find(keyword) != std::string::npos) {
+                return true;
+            }
+        }
+        return fn.hasIO;
+    };
+
+    auto appendFunctionCode = [&](const FunctionBlock& fn) {
+        includedFunctions.insert(fn.name);
+        snippet.append("\n");
+        snippet.append(code.substr(fn.signaturePos, fn.bodyEnd - fn.signaturePos));
+    };
+
+    if (snippet.empty()) {
+        for (const auto& fn : functions) {
+            if (fn.name == "main" || shouldIgnoreFunction(fn)) {
+                continue;
+            }
+            appendFunctionCode(fn);
+        }
+    }
+
+    auto sliceAfterIO = [&](const FunctionBlock& fn) -> std::string {
+        size_t searchStart = fn.bodyStart;
+        size_t searchEnd = fn.bodyEnd;
+        size_t lastIO = std::string::npos;
+        for (const auto& marker : ioTokens()) {
+            size_t pos = cleaned.find(marker, searchStart);
+            while (pos != std::string::npos && pos < searchEnd) {
+                lastIO = std::max(lastIO, pos);
+                pos = cleaned.find(marker, pos + marker.size());
+            }
+        }
+        if (lastIO == std::string::npos) {
+            return code.substr(searchStart, searchEnd - searchStart);
+        }
+        size_t stmtEnd = cleaned.find(';', lastIO);
+        if (stmtEnd == std::string::npos || stmtEnd >= searchEnd) {
+            stmtEnd = searchEnd;
+        } else {
+            ++stmtEnd;
+        }
+        size_t trimmedStart = stmtEnd;
+        while (trimmedStart < searchEnd &&
+               std::isspace(static_cast<unsigned char>(code[trimmedStart]))) {
+            ++trimmedStart;
+        }
+        if (trimmedStart >= searchEnd) {
+            return "";
+        }
+        return code.substr(trimmedStart, searchEnd - trimmedStart);
+    };
+
+    if (snippet.empty() && mainBlock) {
+        // CHANGE: When no markers exist, only analyze what comes after harness IO.
+        snippet = trimSnippet(sliceAfterIO(*mainBlock));
+    }
+
+    auto includeHelpers = [&]() {
+        bool added = true;
+        while (added) {
+            added = false;
+            for (const auto& fn : functions) {
+                if (fn.name == "main" || shouldIgnoreFunction(fn)) {
+                    continue;
+                }
+                if (includedFunctions.count(fn.name)) {
+                    continue;
+                }
+                std::regex callRegex("\\b" + fn.name + R"(\s*\()");
+                if (std::regex_search(snippet, callRegex)) {
+                    appendFunctionCode(fn);
+                    added = true;
+                }
+            }
+        }
+    };
+
+    if (!snippet.empty()) {
+        // CHANGE: Pull helper definitions that are referenced by user logic.
+        includeHelpers();
+    }
+
+    snippet = trimSnippet(snippet);
+    if (snippet.empty()) {
+        lastSnippetStatus = AnalysisStatus::NoUserCode;
+        return {};
+    }
+
+    lastSnippetStatus = AnalysisStatus::OK;
+    return snippet;
+}
+
+int SolutionAnalyzer::countNestedLoops(AnalysisContext& context) {
+    collectLoopSignals(context);
+    int maxDepth = 0;
+    for (const auto& loop : context.loopSignals) {
+        maxDepth = std::max(maxDepth, loop.depth);
+    }
+    return maxDepth;
+}
+
+bool SolutionAnalyzer::containsRecursion(const std::string& cleanedCode) {
+    std::regex funcRegex(R"((?:^|\s)(\w+)\s*\([^)]*\)\s*(?:const)?\s*\{)");
+    std::sregex_iterator iter(cleanedCode.begin(), cleanedCode.end(), funcRegex);
+    std::sregex_iterator end;
+    
+    for (; iter != end; ++iter) {
+        const std::smatch& match = *iter;
+        std::string funcName = match[1].str();
+        
+        if (funcName == "if" || funcName == "for" || funcName == "while" ||
+            funcName == "switch" || funcName == "catch" || funcName == "else") {
+            continue;
+        }
+        
+        size_t bodyStart = match.position() + match.length();
+        int braceDepth = 1;
+        size_t pos = bodyStart;
+        
+        while (pos < cleanedCode.size() && braceDepth > 0) {
+            if (cleanedCode[pos] == '{') {
+                ++braceDepth;
+            } else if (cleanedCode[pos] == '}') {
+                --braceDepth;
+            }
+            ++pos;
+        }
+        
+        if (bodyStart >= pos) {
+            continue;
+        }
+        
+        std::string body = cleanedCode.substr(bodyStart, pos - bodyStart - 1);
+        std::regex callRegex("\\b" + funcName + R"(\s*\()");
+        if (std::regex_search(body, callRegex)) {
             return true;
         }
     }
@@ -62,199 +643,185 @@ bool SolutionAnalyzer::containsRecursion(const std::string& code) {
     return false;
 }
 
-bool SolutionAnalyzer::containsBinarySearch(const std::string& code) {
-    // Patrones típicos de búsqueda binaria
-    return (code.find("left") != std::string::npos && 
-            code.find("right") != std::string::npos &&
-            code.find("mid") != std::string::npos) ||
-           code.find("binary_search") != std::string::npos ||
-           code.find("lower_bound") != std::string::npos;
+bool SolutionAnalyzer::containsBinarySearch(const std::string& cleanedCode) {
+    std::regex wordRegex(R"(\b(left|right|mid|while|binary_search|lower_bound|upper_bound)\b)");
+    std::set<std::string> tokens;
+    
+    auto begin = std::sregex_iterator(cleanedCode.begin(), cleanedCode.end(), wordRegex);
+    auto finish = std::sregex_iterator();
+    
+    for (auto it = begin; it != finish; ++it) {
+        tokens.insert(it->str());
+    }
+    
+    bool hasStdAlgorithms = tokens.count("binary_search") ||
+                            tokens.count("lower_bound") ||
+                            tokens.count("upper_bound");
+    
+    bool hasClassicPattern = tokens.count("left") && tokens.count("right") &&
+                             tokens.count("mid") && tokens.count("while");
+    
+    return hasStdAlgorithms || hasClassicPattern;
 }
 
-bool SolutionAnalyzer::containsSorting(const std::string& code) {
-    return code.find("sort") != std::string::npos ||
-           code.find("std::sort") != std::string::npos ||
-           code.find("qsort") != std::string::npos;
+bool SolutionAnalyzer::containsSorting(const std::string& cleanedCode) {
+    return cleanedCode.find("sort") != std::string::npos ||
+           cleanedCode.find("std::sort") != std::string::npos ||
+           cleanedCode.find("qsort") != std::string::npos ||
+           cleanedCode.find("std::stable_sort") != std::string::npos;
 }
 
 std::vector<std::string> SolutionAnalyzer::detectDataStructures(const std::string& code) {
+    return detectDataStructuresFromClean(cleanCode(code));
+}
+
+std::vector<std::string> SolutionAnalyzer::detectDataStructuresFromClean(const std::string& cleanedCode) {
     std::vector<std::string> dataStructures;
     
-    // Detectar estructuras comunes
-    if (code.find("vector") != std::string::npos) 
-        dataStructures.push_back("Vector/Array Dinámico");
+    const std::vector<std::pair<std::string, std::string>> patterns = {
+        {"vector<", "Vector/Array Dinámico"},
+        {"std::vector", "Vector/Array Dinámico"},
+        {"unordered_map", "Hash Map"},
+        {"std::unordered_map", "Hash Map"},
+        {"map<", "Árbol Map (Balanceado)"},
+        {"std::map", "Árbol Map (Balanceado)"},
+        {"unordered_set", "Hash Set"},
+        {"std::unordered_set", "Hash Set"},
+        {"set<", "Árbol Set (Balanceado)"},
+        {"std::set", "Árbol Set (Balanceado)"},
+        {"stack<", "Stack"},
+        {"std::stack", "Stack"},
+        {"queue<", "Queue"},
+        {"std::queue", "Queue"},
+        {"priority_queue", "Priority Queue/Heap"},
+        {"std::priority_queue", "Priority Queue/Heap"},
+        {"deque<", "Deque"},
+        {"std::deque", "Deque"},
+        {"list<", "Lista Enlazada"},
+        {"std::list", "Lista Enlazada"}
+    };
     
-    if (code.find("map") != std::string::npos || 
-        code.find("unordered_map") != std::string::npos)
-        dataStructures.push_back("Hash Map");
+    for (const auto& [pattern, name] : patterns) {
+        if (cleanedCode.find(pattern) != std::string::npos &&
+            std::find(dataStructures.begin(), dataStructures.end(), name) == dataStructures.end()) {
+            dataStructures.push_back(name);
+        }
+    }
     
-    if (code.find("set") != std::string::npos || 
-        code.find("unordered_set") != std::string::npos)
-        dataStructures.push_back("Set");
-    
-    if (code.find("stack") != std::string::npos)
-        dataStructures.push_back("Stack");
-    
-    if (code.find("queue") != std::string::npos)
-        dataStructures.push_back("Queue");
-    
-    if (code.find("priority_queue") != std::string::npos)
-        dataStructures.push_back("Priority Queue/Heap");
-    
-    if (code.find("deque") != std::string::npos)
-        dataStructures.push_back("Deque");
-    
-    if (code.find("list") != std::string::npos)
-        dataStructures.push_back("Lista Enlazada");
-    
-    // Detectar arrays estáticos
-    std::regex arrayRegex(R"(\w+\s+\w+\s*\[\s*\d+\s*\])");
-    if (std::regex_search(code, arrayRegex))
+    std::regex arrayRegex(R"(\b\w+\s+\w+\s*\[\s*\d+\s*\])");
+    if (std::regex_search(cleanedCode, arrayRegex) &&
+        std::find(dataStructures.begin(), dataStructures.end(), "Array Estático") == dataStructures.end()) {
         dataStructures.push_back("Array Estático");
+    }
     
     return dataStructures;
 }
 
 std::vector<AlgorithmPattern> SolutionAnalyzer::detectPatterns(const std::string& code) {
-    std::vector<AlgorithmPattern> patterns;
-    
-    // Two Pointers
-    if ((code.find("left") != std::string::npos && code.find("right") != std::string::npos) ||
-        (code.find("i") != std::string::npos && code.find("j") != std::string::npos)) {
-        patterns.push_back({
-            "Two Pointers",
-            "medium",
-            "Usa dos punteros para recorrer la estructura"
-        });
+    // CHANGE: Legacy overload builds a temporary context for compatibility.
+    AnalysisContext context;
+    context.rawCode = code;
+    if (!code.empty()) {
+        context.cleanedCode = getCleaned(code);
     }
-    
-    // Sliding Window
-    if (code.find("window") != std::string::npos ||
-        (code.find("left") != std::string::npos && 
-         code.find("right") != std::string::npos &&
-         code.find("while") != std::string::npos)) {
-        patterns.push_back({
-            "Sliding Window",
-            "medium",
-            "Ventana deslizante para optimizar búsquedas"
-        });
-    }
-    
-    // Binary Search
-    if (containsBinarySearch(code)) {
-        patterns.push_back({
-            "Binary Search",
-            "high",
-            "Búsqueda binaria en espacio ordenado"
-        });
-    }
-    
-    // Recursión/Divide and Conquer
-    if (containsRecursion(code)) {
-        patterns.push_back({
-            "Recursión/Divide and Conquer",
-            "high",
-            "Solución recursiva dividiendo el problema"
-        });
-    }
-    
-    // Dynamic Programming (heurística básica)
-    if (code.find("dp") != std::string::npos || 
-        code.find("memo") != std::string::npos ||
-        (code.find("vector<vector<") != std::string::npos && containsRecursion(code))) {
-        patterns.push_back({
-            "Dynamic Programming",
-            "medium",
-            "Programación dinámica con memoización"
-        });
-    }
-    
-    // Greedy
-    if (containsSorting(code) && code.find("for") != std::string::npos) {
-        patterns.push_back({
-            "Greedy Algorithm",
-            "low",
-            "Posible enfoque greedy (ordenar + iterar)"
-        });
-    }
-    
-    // Backtracking
-    if (containsRecursion(code) && 
-        (code.find("push_back") != std::string::npos && code.find("pop_back") != std::string::npos)) {
-        patterns.push_back({
-            "Backtracking",
-            "medium",
-            "Exploración exhaustiva con retroceso"
-        });
-    }
-    
+    context.status = code.empty() ? AnalysisStatus::NoUserCode : AnalysisStatus::OK;
+    return detectPatterns(context);
+}
+
+std::vector<AlgorithmPattern> SolutionAnalyzer::detectPatterns(AnalysisContext& context) {
+    collectLoopSignals(context);
+    auto patterns = detectPatternsFromClean(context.cleanedCode);
+    adjustPatternConfidence(patterns, context);
     return patterns;
 }
 
 ComplexityAnalysis SolutionAnalyzer::estimateComplexity(const std::string& code) {
-    ComplexityAnalysis analysis;
-    
-    int nestedLoops = countNestedLoops(code);
-    bool hasRecursion = containsRecursion(code);
-    bool hasBinarySearch = containsBinarySearch(code);
-    bool hasSorting = containsSorting(code);
-    
-    // Estimar complejidad temporal
-    if (hasSorting) {
-        analysis.timeComplexity = "O(n log n)";
-        analysis.explanation = "Usa ordenamiento (típicamente O(n log n))";
-        analysis.confidence = "high";
-    } else if (hasBinarySearch) {
-        analysis.timeComplexity = "O(log n)";
-        analysis.explanation = "Búsqueda binaria sobre espacio ordenado";
-        analysis.confidence = "high";
-    } else if (nestedLoops >= 3) {
-        analysis.timeComplexity = "O(n³) o mayor";
-        analysis.explanation = "Tiene 3 o más loops anidados";
-        analysis.confidence = "high";
-    } else if (nestedLoops == 2) {
-        analysis.timeComplexity = "O(n²)";
-        analysis.explanation = "Tiene 2 loops anidados";
-        analysis.confidence = "high";
-    } else if (nestedLoops == 1) {
-        analysis.timeComplexity = "O(n)";
-        analysis.explanation = "Recorre la entrada linealmente";
-        analysis.confidence = "high";
-    } else if (hasRecursion) {
-        analysis.timeComplexity = "O(2ⁿ) o O(n!)";
-        analysis.explanation = "Recursión sin memoización (exponencial posible)";
-        analysis.confidence = "medium";
-    } else {
-        analysis.timeComplexity = "O(1)";
-        analysis.explanation = "Operaciones constantes";
-        analysis.confidence = "medium";
+    // CHANGE: Wrapper builds a temporary context so external callers keep legacy API.
+    AnalysisContext context;
+    context.rawCode = code;
+    if (!code.empty()) {
+        context.cleanedCode = getCleaned(code);
     }
-    
-    // Estimar complejidad espacial
-    std::vector<std::string> ds = detectDataStructures(code);
-    
-    if (ds.size() > 0) {
-        bool hasDynamicStructure = false;
-        for (const auto& structure : ds) {
-            if (structure.find("Vector") != std::string::npos ||
-                structure.find("Map") != std::string::npos ||
-                structure.find("Set") != std::string::npos) {
-                hasDynamicStructure = true;
+    context.status = code.empty() ? AnalysisStatus::NoUserCode : AnalysisStatus::OK;
+    return estimateComplexityFromContext(context);
+}
+
+ComplexityAnalysis SolutionAnalyzer::estimateComplexityFromClean(const std::string& cleanedCode) {
+    AnalysisContext context;
+    context.rawCode = cleanedCode;
+    context.cleanedCode = cleanedCode;
+    context.status = cleanedCode.empty() ? AnalysisStatus::NoUserCode : AnalysisStatus::OK;
+    return estimateComplexityFromContext(context);
+}
+
+ComplexityAnalysis SolutionAnalyzer::estimateComplexityFromContext(AnalysisContext& context) {
+    collectLoopSignals(context);
+    ComplexityAnalysis analysis;
+    const std::string& cleanedCode = context.cleanedCode;
+    if (cleanedCode.empty()) {
+        analysis.timeComplexity = "O(1)";
+        analysis.spaceComplexity = "O(1)";
+        analysis.confidence = "low";
+        analysis.explanation = "Sin bucles detectados";
+        return analysis;
+    }
+    int maxDepth = countNestedLoops(context);
+    bool hasLogLoop = false;
+    bool hasLinearLoop = false;
+    bool hasHashStructure = false;
+    bool hasMemo = detectMemoization(cleanedCode);
+    for (const auto& loop : context.loopSignals) {
+        hasLogLoop = hasLogLoop || loop.isLogarithmic;
+        hasLinearLoop = hasLinearLoop || !loop.isLogarithmic;
+        hasHashStructure = hasHashStructure || loop.hasHashStructure;
+    }
+    if (maxDepth <= 0) {
+        analysis.timeComplexity = "O(1)";
+        analysis.spaceComplexity = hasMemo ? "O(n)" : "O(1)";
+        analysis.confidence = "high";
+        analysis.explanation = hasMemo ? "Uso de memoización sin bucles" : "Sin bucles detectados";
+        return analysis;
+    }
+    if (maxDepth == 1) {
+        if (hasLogLoop && !hasLinearLoop) {
+            analysis.timeComplexity = "O(log n)";
+            analysis.explanation = "Loop con actualizaciones logarítmicas";
+        } else {
+            analysis.timeComplexity = "O(n)";
+            analysis.explanation = hasLogLoop ? "Loop lineal con operaciones logarítmicas parciales" : "Loop lineal";
+        }
+    } else if (maxDepth == 2) {
+        bool innerLog = false;
+        for (const auto& loop : context.loopSignals) {
+            if (loop.depth >= 2 && loop.isLogarithmic) {
+                innerLog = true;
                 break;
             }
         }
-        
-        if (hasDynamicStructure) {
-            analysis.spaceComplexity = "O(n)";
+        if (innerLog) {
+            analysis.timeComplexity = "O(n log n)";
+            analysis.explanation = "Loop externo lineal con loop interno logarítmico";
         } else {
-            analysis.spaceComplexity = "O(1)";
+            analysis.timeComplexity = "O(n²)";
+            analysis.explanation = "Loops anidados";
         }
     } else {
-        analysis.spaceComplexity = "O(1)";
+        analysis.timeComplexity = "O(n^" + std::to_string(maxDepth) + ")";
+        analysis.explanation = "Más de dos niveles de loops";
     }
-    
+    analysis.spaceComplexity = hasMemo ? "O(n)" : (hasHashStructure ? "O(n)" : "O(1)");
+    analysis.confidence = "high";
+    if (analysis.spaceComplexity == "O(n)") {
+        analysis.explanation += " | Espacio: estructuras auxiliares que crecen con la entrada";
+    }
     return analysis;
 }
+
+// TEST NOTES:
+// 1. Plantilla vacía (solo main con lectura) debe arrojar status=NoUserCode y complejidad N/A; validar ejecutando analyzer.analyze sobre template base.
+// 2. Código con marcadores // === BEGIN USER CODE === envolviendo un bucle for debe reportar O(n) y status OK; asegura que el harness fuera del bloque no afecta el resultado.
+// 3. Submisión sin marcadores pero con lógica posterior a cin/cout debe analizar únicamente el tramo posterior y detectar complejidad correcta (por ejemplo O(n²) si hay doble loop después de la lectura).
+// 4. Helper neutro sin IO (ej. solve()) llamado desde main debe incluirse en el snippet y permitir detectar patrones (e.g., recursión -> Divide and Conquer).
 
 std::string SolutionAnalyzer::makeLLMRequest(const std::string& prompt) {
     // Validar que prompt no esté vacío
@@ -328,9 +895,11 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
                                        int testsPassed,
                                        int testsFailed) {
     CodeAnalysis analysis;
+    analysis.status = "OK"; // CHANGE: Default status expuesto a la API.
     
     // Validar entrada
     if (code.empty()) {
+        analysis.status = "NoUserCode"; // CHANGE: Explicita que no hay código que analizar.
         analysis.complexity.timeComplexity = "N/A";
         analysis.complexity.spaceComplexity = "N/A";
         analysis.complexity.confidence = "low";
@@ -342,14 +911,43 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
     if (testsPassed < 0) testsPassed = 0;
     if (testsFailed < 0) testsFailed = 0;
     
+    std::string rawSnippet = extractRelevantCode(code);
+    AnalysisStatus snippetStatus = lastSnippetStatus;
+    
+    AnalysisContext context;
+    context.status = snippetStatus;
+    context.rawCode = rawSnippet;
+    if (!rawSnippet.empty()) {
+        context.cleanedCode = getCleaned(rawSnippet);
+    }
+    
+    bool hasUserCode = snippetStatus == AnalysisStatus::OK &&
+        context.cleanedCode.find_first_not_of(" \t\r\n") != std::string::npos;
+    
+    if (!hasUserCode) {
+        // CHANGE: Surface status so UI can indicate plantilla vacía instead of false positives.
+        analysis.status = "NoUserCode";
+        analysis.complexity.timeComplexity = "N/A";
+        analysis.complexity.spaceComplexity = "N/A";
+        analysis.complexity.confidence = "low";
+        analysis.complexity.explanation = "No se detectó código del estudiante";
+        return analysis;
+    }
+    
+    analysis.status = "OK";
+    
+    collectLoopSignals(context);
+    
     // 1. Análisis estático
-    analysis.complexity = estimateComplexity(code);
-    analysis.dataStructures = detectDataStructures(code);
-    analysis.patterns = detectPatterns(code);
+    analysis.complexity = estimateComplexityFromContext(context);
+    analysis.dataStructures = detectDataStructuresFromClean(context.cleanedCode);
+    analysis.patterns = detectPatterns(context);
+    adjustComplexityConfidence(analysis.complexity, context);
     
     // 2. Análisis con LLM (opcional, más preciso)
     if (!openAIKey.empty()) {
-        std::string truncatedCode = code.substr(0, std::min<size_t>(800, code.size()));
+        const std::string& llmSource = context.rawCode.empty() ? code : context.rawCode;
+        std::string truncatedCode = llmSource.substr(0, std::min<size_t>(800, llmSource.size()));
         
         std::string prompt = 
             "IMPORTANTE: Responde EN ESPAÑOL LATINOAMERICANO. Usa un lenguaje técnico pero natural de Latinoamérica."
@@ -366,25 +964,43 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
         std::string llmResponse = makeLLMRequest(prompt);
         
         if (!llmResponse.empty()) {
-            // El LLM puede proporcionar análisis más refinado
-            // Por ahora usamos el estático + guardamos respuesta LLM como sugerencia
             analysis.suggestions.push_back(llmResponse);
         }
     }
     
     // 3. Sugerencias basadas en análisis estático
-    if (analysis.complexity.timeComplexity.find("n²") != std::string::npos ||
-        analysis.complexity.timeComplexity.find("n³") != std::string::npos) {
+    const std::string& timeComplexity = analysis.complexity.timeComplexity;
+    bool isQuadraticOrHigher = timeComplexity.find("n²") != std::string::npos ||
+                               timeComplexity.find("n³") != std::string::npos ||
+                               timeComplexity.find("n^2") != std::string::npos ||
+                               timeComplexity.find("n^3") != std::string::npos ||
+                               timeComplexity.find("n^") != std::string::npos;
+    if (isQuadraticOrHigher) {
         analysis.suggestions.push_back(
             "💡 La complejidad es cuadrática o mayor. Considera usar estructuras como "
             "hash maps o algoritmos más eficientes."
         );
     }
     
-    if (analysis.dataStructures.empty()) {
+    if (isQuadraticOrHigher &&
+        analysis.dataStructures.empty() && countNestedLoops(context) > 1) {
         analysis.suggestions.push_back(
-            "💡 No usas estructuras de datos auxiliares. Considera si un hash map "
-            "o vector podría optimizar tu solución."
+            "💡 Múltiples loops sin estructuras auxiliares. Considera usar un hash map o set "
+            "para reducir la complejidad."
+        );
+    }
+    
+    bool heavyOperations = false;
+    for (const auto& loop : context.loopSignals) {
+        if (loop.hasMultiplicativeUpdate || loop.hasModulo || loop.hasPower) {
+            heavyOperations = true;
+            break;
+        }
+    }
+    if (heavyOperations) {
+        analysis.suggestions.push_back(
+            "⚠️ Dentro de tus loops hay multiplicaciones/divisiones o módulo repetidos. "
+            "Evalúa si puedes mover esas operaciones fuera del loop o precalcular resultados."
         );
     }
     
@@ -395,5 +1011,238 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
         );
     }
     
+    if (containsRecursion(context.cleanedCode) &&
+        analysis.complexity.explanation.find("memoización") == std::string::npos) {
+        analysis.suggestions.push_back(
+            "💡 Recursión detectada sin memoización. Considera cachear resultados para evitar recomputar."
+        );
+    }
+    
     return analysis;
+}
+
+LoopSignals SolutionAnalyzer::analyzeLoop(const std::string& header,
+                            const std::string& body,
+                            int depth) const {
+    LoopSignals signals;
+    signals.depth = depth;
+    signals.hasTwoPointers = hasTwoPointerVariables(body);
+    signals.hasOppositePointerMovement = detectOppositePointerMovement(body);
+    signals.hasPointerStopConditions = detectPointerStopCondition(header);
+    signals.hasBinarySearchPattern = detectBinarySearchPattern(header + "\n" + body);
+    signals.isLogarithmic = detectLogarithmicUpdate(header) ||
+                            detectLogarithmicUpdate(body) ||
+                            signals.hasBinarySearchPattern;
+    signals.hasMultiplicativeUpdate = detectMultiplicativeUpdate(body);
+    signals.hasModulo = detectModuloUsage(body);
+    signals.hasPower = detectPowerOperation(body);
+    signals.hasSorting = detectSortingInLoop(body);
+    signals.hasHashStructure = detectHashStructure(body);
+    signals.hasMemoization = detectMemoization(body);
+    signals.hasDivision = body.find('/') != std::string::npos;
+    return signals;
+}
+
+void SolutionAnalyzer::collectLoopSignals(AnalysisContext& context) {
+    if (!context.loopSignals.empty()) {
+        return;
+    }
+    const std::string& code = context.cleanedCode;
+    if (code.empty()) {
+        return;
+    }
+    struct StackFrame {
+        bool isLoop;
+        int loopIndex;
+    };
+    std::vector<StackFrame> stack;
+    size_t i = 0;
+    while (i < code.size()) {
+        if (std::isspace(static_cast<unsigned char>(code[i]))) {
+            ++i;
+            continue;
+        }
+        bool isFor = startsWithWord(code, i, "for");
+        bool isWhile = startsWithWord(code, i, "while");
+        if (isFor || isWhile) {
+            size_t headerStart = i;
+            size_t keywordLen = isFor ? 3 : 5;
+            i += keywordLen;
+            size_t parenStart = skipWhitespace(code, i);
+            if (parenStart >= code.size() || code[parenStart] != '(') {
+                ++i;
+                continue;
+            }
+            size_t parenEnd = findMatching(code, parenStart, '(', ')');
+            if (parenEnd == std::string::npos) {
+                break;
+            }
+            size_t headerEnd = parenEnd;
+            std::string header = code.substr(headerStart, headerEnd - headerStart + 1);
+            size_t bodyStart = skipWhitespace(code, parenEnd + 1);
+            bool hasBraces = bodyStart < code.size() && code[bodyStart] == '{';
+            size_t bodyEnd;
+            if (hasBraces) {
+                bodyEnd = findMatching(code, bodyStart, '{', '}');
+                if (bodyEnd == std::string::npos) {
+                    bodyEnd = code.size() - 1;
+                }
+            } else {
+                bodyEnd = findStatementEnd(code, bodyStart);
+                if (bodyEnd == std::string::npos) {
+                    bodyEnd = code.size();
+                } else if (bodyEnd > 0) {
+                    --bodyEnd;
+                }
+            }
+            if (bodyEnd <= bodyStart || bodyStart >= code.size()) {
+                ++i;
+                continue;
+            }
+            std::string body = code.substr(bodyStart, bodyEnd - bodyStart + 1);
+            int depth = 0;
+            for (const auto& frame : stack) {
+                if (frame.isLoop) {
+                    ++depth;
+                }
+            }
+            LoopSignals signals = analyzeLoop(header, body, depth + 1);
+            context.loopSignals.push_back(signals);
+            if (signals.hasTwoPointers) {
+                context.patternScores["Two Pointers"] += signals.hasOppositePointerMovement ? 1.0 : 0.5;
+            }
+            if (signals.hasBinarySearchPattern) {
+                context.patternScores["Binary Search"] += 1.0;
+            }
+            if (signals.isLogarithmic) {
+                context.patternScores["Logarithmic"] += 1.0;
+            }
+            if (hasBraces) {
+                stack.push_back({true, static_cast<int>(context.loopSignals.size() - 1)});
+                i = bodyStart + 1;
+            } else {
+                i = bodyEnd + 1;
+            }
+            continue;
+        }
+        if (code[i] == '{') {
+            stack.push_back({false, -1});
+            ++i;
+            continue;
+        }
+        if (code[i] == '}') {
+            if (!stack.empty()) {
+                stack.pop_back();
+            }
+            ++i;
+            continue;
+        }
+        ++i;
+    }
+}
+
+void SolutionAnalyzer::adjustPatternConfidence(std::vector<AlgorithmPattern>& patterns,
+                                 const AnalysisContext& context) const {
+    if (patterns.empty()) {
+        return;
+    }
+    bool hasTwoPointers = false;
+    bool validTwoPointers = false;
+    bool hasBinarySearch = false;
+    bool hasMemo = detectMemoization(context.cleanedCode);
+    for (const auto& loop : context.loopSignals) {
+        if (loop.hasTwoPointers) {
+            hasTwoPointers = true;
+            if (loop.hasOppositePointerMovement && loop.hasPointerStopConditions) {
+                validTwoPointers = true;
+            }
+        }
+        if (loop.hasBinarySearchPattern) {
+            hasBinarySearch = true;
+        }
+    }
+    for (auto& pattern : patterns) {
+        if (pattern.patternName == "Two Pointers") {
+            if (!hasTwoPointers) {
+                pattern.confidence = "low";
+                pattern.description += " (no se detectaron punteros complementarios)";
+            } else if (!validTwoPointers) {
+                pattern.confidence = "medium";
+                pattern.description += " (los punteros no avanzan en direcciones opuestas)";
+            } else {
+                pattern.confidence = "high";
+            }
+        } else if (pattern.patternName == "Binary Search") {
+            pattern.confidence = hasBinarySearch ? "high" : "low";
+        } else if (pattern.patternName == "Dynamic Programming") {
+            pattern.confidence = hasMemo ? "high" : "medium";
+        }
+    }
+}
+
+void SolutionAnalyzer::adjustComplexityConfidence(ComplexityAnalysis& analysis,
+                                    const AnalysisContext& context) const {
+    if (context.loopSignals.empty()) {
+        if (analysis.timeComplexity != "O(1)") {
+            analysis.confidence = "low";
+        }
+        return;
+    }
+    int maxDepth = 0;
+    bool hasLog = false;
+    for (const auto& loop : context.loopSignals) {
+        maxDepth = std::max(maxDepth, loop.depth);
+        if (loop.isLogarithmic || loop.hasBinarySearchPattern) {
+            hasLog = true;
+        }
+    }
+    bool mismatch = false;
+    if ((analysis.timeComplexity.find("n²") != std::string::npos ||
+         analysis.timeComplexity.find("n^2") != std::string::npos) &&
+        maxDepth < 2) {
+        mismatch = true;
+    }
+    if (analysis.timeComplexity.find("n log n") != std::string::npos && (!hasLog || maxDepth < 2)) {
+        mismatch = true;
+    }
+    if (analysis.timeComplexity.find("log n") != std::string::npos && !hasLog) {
+        mismatch = true;
+    }
+    if (analysis.timeComplexity == "O(1)" && maxDepth > 0) {
+        mismatch = true;
+    }
+    if (mismatch) {
+        analysis.confidence = (analysis.confidence == "high") ? "medium" : "low";
+    } else if (analysis.confidence.empty()) {
+        analysis.confidence = "high";
+    }
+}
+
+std::vector<AlgorithmPattern> SolutionAnalyzer::detectPatternsFromClean(const std::string& cleanedCode) {
+    std::vector<AlgorithmPattern> patterns;
+    if (cleanedCode.empty()) {
+        return patterns;
+    }
+    auto pushPattern = [&](const std::string& name, const std::string& desc) {
+        patterns.push_back(AlgorithmPattern{name, "medium", desc});
+    };
+    if (hasTwoPointerVariables(cleanedCode)) {
+        pushPattern("Two Pointers", "Uso de dos punteros sobre la colección");
+    }
+    if (containsBinarySearch(cleanedCode)) {
+        pushPattern("Binary Search", "Comparaciones con mid, left y right");
+    }
+    if (detectMemoization(cleanedCode)) {
+        pushPattern("Dynamic Programming", "Se detecta estructura de memoización");
+    }
+    if (cleanedCode.find("queue") != std::string::npos) {
+        pushPattern("BFS", "Uso de cola para recorrido");
+    }
+    if (cleanedCode.find("stack") != std::string::npos) {
+        pushPattern("DFS", "Uso de stack para recorrido");
+    }
+    if (cleanedCode.find("priority_queue") != std::string::npos) {
+        pushPattern("Priority Queue", "Uso de heap / priority_queue");
+    }
+    return patterns;
 }

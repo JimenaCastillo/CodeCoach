@@ -166,7 +166,7 @@ void RestAPI::start() {
                         {{"input", "3 3\n6"}, {"expectedOutput", "0 1"}}
                     })},
                     {"solutionTemplate", "#include <iostream>\n#include <vector>\nusing namespace std;\n\n"
-                                        "int main() {\n    // Tu código aquí\n    return 0;\n}"}
+                                        "int main() {\n    // === BEGIN USER CODE ===\n    // Tu código aquí\n    // === END USER CODE ===\n    return 0;\n}"}
                 };
             } else if (id == "2") {
                 problem = {
@@ -181,7 +181,7 @@ void RestAPI::start() {
                         {{"input", "a"}, {"expectedOutput", "a"}}
                     })},
                     {"solutionTemplate", "#include <iostream>\n#include <string>\nusing namespace std;\n\n"
-                                        "int main() {\n    // Tu código aquí\n    return 0;\n}"}
+                                        "int main() {\n    // === BEGIN USER CODE ===\n    // Tu código aquí\n    // === END USER CODE ===\n    return 0;\n}"}
                 };
             } else {
                 problem = {
@@ -371,6 +371,7 @@ void RestAPI::start() {
                 analysis.complexity.spaceComplexity = "N/A";
                 analysis.complexity.confidence = "low";
                 analysis.complexity.explanation = "No se pudo analizar la complejidad";
+                analysis.status = "error"; // CHANGE: Indica fallo en la etapa de análisis.
             }
             
             // Construir respuesta con análisis
@@ -388,6 +389,7 @@ void RestAPI::start() {
                     {"spaceComplexity", analysis.complexity.spaceComplexity},
                     {"confidence", analysis.complexity.confidence},
                     {"explanation", analysis.complexity.explanation},
+                    {"status", analysis.status}, // CHANGE: Propaga estado NoUserCode al frontend.
                     {"dataStructures", analysis.dataStructures},
                     {"patterns", json::array()},
                     {"suggestions", analysis.suggestions}
