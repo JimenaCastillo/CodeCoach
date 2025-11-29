@@ -8,12 +8,14 @@
 #include "openai_client.h"
 #include "motor_eval.h"
 
+// Constructor del REST API
 RestAPI::RestAPI(int port) : port(port) {
     baseURL = "mongodb+srv://kgarro3_db_user:OQQkcyW2wqw2kWzV@clustercodecoach.cz5islf.mongodb.net/";
 }
 
+// Carga variable de entorno desde archivo .env
 std::string RestAPI::loadEnvVariable(const std::string& key) {
-    // Buscar .env en múltiples ubicaciones posibles
+    // PASO 1: Definir ubicaciones posibles del .env
     std::vector<std::string> possiblePaths = {
         ".env",                                    // Directorio actual
         "../.env",                                 // Un nivel arriba
@@ -24,23 +26,25 @@ std::string RestAPI::loadEnvVariable(const std::string& key) {
     std::ifstream envFile;
     std::string envPath;
     
-    // Intentar abrir .env desde diferentes ubicaciones
+    // PASO 2: Intentar abrir .env desde cada ubicación
     for (const auto& path : possiblePaths) {
         envFile.open(path);
         if (envFile.is_open()) {
             envPath = path;
-            break;
+            break; // Encontrado, salir del loop
         }
     }
     
+    // PASO 3: Verificar si se pudo abrir
     if (!envFile.is_open()) {
         std::cerr << "Error: No se pudo abrir .env" << std::endl;
         return "";
     }
     
+    // PASO 4: Buscar la variable en el archivo
     std::string line;
-    
     while (std::getline(envFile, line)) {
+        // Verificar si la línea comienza con la key
         if (line.find(key) == 0) {
             size_t pos = line.find('=');
             if (pos != std::string::npos) {
@@ -51,16 +55,21 @@ std::string RestAPI::loadEnvVariable(const std::string& key) {
     }
     
     envFile.close();
-    return "";
+    return ""; // No encontrado
 }
 
+
+// Inicia el servidor REST API
 void RestAPI::start() {
+    // PASO 1: Crear servidor HTTP
     httplib::Server svr;
     
-    // Cargar variables de entorno
+    // PASO 2: Cargar variables de entorno
     std::string mongoURI = loadEnvVariable("MONGODB_URI");
     std::string openaiKey = loadEnvVariable("OPENAI_API_KEY");
     
+
+    // PASO 3: Verificar configuración
     if (mongoURI.empty()) {
         std::cerr << "Advertencia: MONGODB_URI no configurado, usando problemas hardcodeados" << std::endl;
     }
@@ -69,10 +78,12 @@ void RestAPI::start() {
         std::cerr << "Advertencia: OPENAI_API_KEY no configurado" << std::endl;
     }
     
-    // Crear instancias de managers
+    // PASO 4: Inicializar MongoDB Manager
     MongoDBManager* dbManager = nullptr;
     if (!mongoURI.empty()) {
         dbManager = new MongoDBManager(mongoURI);
+
+        // Probar conexión
         if (dbManager->testConnection()) {
             std::cout << "Conectado a MongoDB" << std::endl;
             std::cout << "Problemas en BD: " << dbManager->getProblemsCount() << std::endl;
@@ -92,6 +103,7 @@ void RestAPI::start() {
             try {
                 std::vector<Problem> problems = dbManager->getAllProblems();
                 
+                // Convertir cada Problem a JSON simplificado
                 for (const auto& problem : problems) {
                     response.push_back({
                         {"id", problem.id},
@@ -371,7 +383,7 @@ void RestAPI::start() {
                 analysis.complexity.spaceComplexity = "N/A";
                 analysis.complexity.confidence = "low";
                 analysis.complexity.explanation = "No se pudo analizar la complejidad";
-                analysis.status = "error"; // CHANGE: Indica fallo en la etapa de análisis.
+                analysis.status = "error"; // Indica fallo en la etapa de análisis.
             }
             
             // Construir respuesta con análisis
@@ -389,7 +401,7 @@ void RestAPI::start() {
                     {"spaceComplexity", analysis.complexity.spaceComplexity},
                     {"confidence", analysis.complexity.confidence},
                     {"explanation", analysis.complexity.explanation},
-                    {"status", analysis.status}, // CHANGE: Propaga estado NoUserCode al frontend.
+                    {"status", analysis.status}, // Propaga estado NoUserCode al frontend.
                     {"dataStructures", analysis.dataStructures},
                     {"patterns", json::array()},
                     {"suggestions", analysis.suggestions}
@@ -422,6 +434,7 @@ void RestAPI::start() {
     
     // Endpoint: POST /api/feedback - Obtener feedback de OpenAI
     svr.Post("/api/feedback", [openaiKey](const httplib::Request& req, httplib::Response& res) {
+        // PASO 1: Parsear body
         try {
             auto body = json::parse(req.body);
             
@@ -485,6 +498,7 @@ void RestAPI::start() {
             std::string compilationError = body.value("compilationError", "");
             std::string runtimeError = body.value("runtimeError", "");
             
+            // Validar OpenAI key configurada
             if (openaiKey.empty()) {
                 json error = {
                     {"success", false},
@@ -496,13 +510,14 @@ void RestAPI::start() {
                 return;
             }
             
-            // Generar feedback
+            // PASO 2: Generar feedback con OpenAI
             OpenAIClient openai(openaiKey);
             std::string feedback = openai.generateFeedback(
                 code, testsPassed, testsFailed, 
                 compilationError, runtimeError
             );
             
+            // PASO 3: Construir respuesta
             json response = {
                 {"success", true},
                 {"feedback", feedback}
@@ -552,9 +567,9 @@ void RestAPI::start() {
         res.set_content(error.dump(), "application/json");
     });
     
-    std::cout << "🚀 CodeCoach Backend iniciando en puerto " << port << std::endl;
-    std::cout << "📍 http://localhost:" << port << std::endl;
-    std::cout << "✅ Health check: http://localhost:" << port << "/health" << std::endl;
+    std::cout << "CodeCoach Backend iniciando en puerto " << port << std::endl;
+    std::cout << "http://localhost:" << port << std::endl;
+    std::cout << "Health check: http://localhost:" << port << "/health" << std::endl;
     
     svr.listen("localhost", port);
     

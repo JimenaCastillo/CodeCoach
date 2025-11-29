@@ -1,0 +1,3 @@
+/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/build/CMakeFiles/codecoach.dir
+/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/build/CMakeFiles/edit_cache.dir
+/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/build/CMakeFiles/rebuild_cache.dir

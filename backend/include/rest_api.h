@@ -7,24 +7,25 @@
 
 using json = nlohmann::json;
 
+// Servidor REST API del backend
 class RestAPI {
 private:
-    int port;
-    std::string baseURL;
-    std::string apiKey;
+    int port;               // Puerto del servidor (default: 8080)
+    std::string baseURL;    // URL base de MongoDB
+    std::string apiKey;     // API key de OpenAI   
 
 public:
-    RestAPI(int port);
-    void start();
+    RestAPI(int port); // Constructor del REST API
+    void start(); // Inicia el servidor REST API
     
-    // Endpoints
+    // Métodos públicos para endpoints (pueden ser llamados externamente)
     json getProblems();
     json getProblem(const std::string& id);
     json createProblem(const json& problemData);
     
 private:
     // Helpers
-    std::string loadEnvVariable(const std::string& key);
+    std::string loadEnvVariable(const std::string& key); // Carga variable de entorno desde .env
 };
 
 #endif

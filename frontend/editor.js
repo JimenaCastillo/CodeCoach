@@ -1,4 +1,6 @@
-let editor;
+let editor; // Referencia al textarea del editor
+
+// Marcadores para identificar sección de código del usuario
 const USER_BLOCK_START = '// === BEGIN USER CODE ===';
 const USER_BLOCK_END = '// === END USER CODE ===';
 
@@ -6,6 +8,7 @@ const USER_BLOCK_END = '// === END USER CODE ===';
 document.addEventListener('DOMContentLoaded', function() {
     editor = document.getElementById('editor');
     if (editor) {
+        // Código inicial por defecto
         editor.value =
 `#include <iostream>
 int main() {
@@ -29,7 +32,7 @@ function setEditorCode(code) {
     }
 }
 
-// Limpiar editor
+// Limpiar editor con template por defecto
 function clearEditor() {
     setEditorCode(
 `#include <iostream>

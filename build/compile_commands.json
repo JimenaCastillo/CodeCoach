@@ -1,0 +1,38 @@
+[
+{
+  "directory": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/build",
+  "command": "/usr/bin/g++  -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/include\" -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/third_party/cpp-httplib\"  -Wall -Wextra -g -std=gnu++17 -o CMakeFiles/codecoach.dir/src/main.cpp.o -c \"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/main.cpp\"",
+  "file": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/main.cpp",
+  "output": "CMakeFiles/codecoach.dir/src/main.cpp.o"
+},
+{
+  "directory": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/build",
+  "command": "/usr/bin/g++  -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/include\" -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/third_party/cpp-httplib\"  -Wall -Wextra -g -std=gnu++17 -o CMakeFiles/codecoach.dir/src/rest_api.cpp.o -c \"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/rest_api.cpp\"",
+  "file": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/rest_api.cpp",
+  "output": "CMakeFiles/codecoach.dir/src/rest_api.cpp.o"
+},
+{
+  "directory": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/build",
+  "command": "/usr/bin/g++  -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/include\" -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/third_party/cpp-httplib\"  -Wall -Wextra -g -std=gnu++17 -o CMakeFiles/codecoach.dir/src/motor_eval.cpp.o -c \"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/motor_eval.cpp\"",
+  "file": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/motor_eval.cpp",
+  "output": "CMakeFiles/codecoach.dir/src/motor_eval.cpp.o"
+},
+{
+  "directory": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/build",
+  "command": "/usr/bin/g++  -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/include\" -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/third_party/cpp-httplib\"  -Wall -Wextra -g -std=gnu++17 -o CMakeFiles/codecoach.dir/src/mongodb_manager.cpp.o -c \"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/mongodb_manager.cpp\"",
+  "file": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/mongodb_manager.cpp",
+  "output": "CMakeFiles/codecoach.dir/src/mongodb_manager.cpp.o"
+},
+{
+  "directory": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/build",
+  "command": "/usr/bin/g++  -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/include\" -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/third_party/cpp-httplib\"  -Wall -Wextra -g -std=gnu++17 -o CMakeFiles/codecoach.dir/src/openai_client.cpp.o -c \"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/openai_client.cpp\"",
+  "file": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/openai_client.cpp",
+  "output": "CMakeFiles/codecoach.dir/src/openai_client.cpp.o"
+},
+{
+  "directory": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/build",
+  "command": "/usr/bin/g++  -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/include\" -I\"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/third_party/cpp-httplib\"  -Wall -Wextra -g -std=gnu++17 -o CMakeFiles/codecoach.dir/src/solution_analyzer.cpp.o -c \"/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/solution_analyzer.cpp\"",
+  "file": "/home/Sarimoca/Datos 2/Proyecto_2/CodeCoach/backend/src/solution_analyzer.cpp",
+  "output": "CMakeFiles/codecoach.dir/src/solution_analyzer.cpp.o"
+}
+]

@@ -8,11 +8,11 @@
 #include <unistd.h>
 #include <cctype>
 #include <cstdio>
-#include <unordered_map> // CHANGE: Cache sanitized fragments to avoid repeated cleaning passes.
+#include <unordered_map>
 
 namespace {
 
-// CHANGE: Centralized IO markers allow harness trimming and helper filtering rules.
+// Retorna lista de tokens de IO
 const std::vector<std::string>& ioTokens() {
     static const std::vector<std::string> tokens = {
         "cin", "cout", "scanf", "printf", "getline", "puts", "putchar",
@@ -22,7 +22,7 @@ const std::vector<std::string>& ioTokens() {
     return tokens;
 }
 
-// CHANGE: Extended ignore keywords to capture additional template helpers.
+// Retorna keywords para ignorar funciones helper
 const std::vector<std::string>& ignoreKeywords() {
     static const std::vector<std::string> keywords = {
         "parse", "reader", "writer", "read", "print", "input", "output", "write",
@@ -35,7 +35,7 @@ const std::vector<std::string>& ignoreKeywords() {
     return keywords;
 }
 
-// CHANGE: Utility trim to confirm whether a snippet still has meaningful content.
+// Remueve whitespace de un snippet
 std::string trimSnippet(const std::string& text) {
     size_t start = text.find_first_not_of(" \t\r\n");
     if (start == std::string::npos) {
@@ -45,10 +45,12 @@ std::string trimSnippet(const std::string& text) {
     return text.substr(start, end - start + 1);
 }
 
+// Verifica si una posición es límite de palabra
 inline bool isWordBoundary(const std::string& text, size_t pos) {
     return pos >= text.size() || (!(std::isalnum(static_cast<unsigned char>(text[pos])) || text[pos] == '_'));
 }
 
+// Verifica si una palabra comienza en cierta posición
 bool startsWithWord(const std::string& text, size_t pos, const std::string& word) {
     if (pos + word.size() > text.size()) {
         return false;
@@ -61,6 +63,7 @@ bool startsWithWord(const std::string& text, size_t pos, const std::string& word
     return leftOK && rightOK;
 }
 
+// Salta whitespace desde una posición
 size_t skipWhitespace(const std::string& text, size_t pos) {
     while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
         ++pos;
@@ -68,6 +71,7 @@ size_t skipWhitespace(const std::string& text, size_t pos) {
     return pos;
 }
 
+// Encuentra el carácter de cierre correspondiente
 size_t findMatching(const std::string& text, size_t start, char openChar, char closeChar) {
     if (start >= text.size() || text[start] != openChar) {
         return std::string::npos;
@@ -87,6 +91,7 @@ size_t findMatching(const std::string& text, size_t start, char openChar, char c
     return std::string::npos;
 }
 
+// Encuentra el final de una declaración (hasta el ';')
 size_t findStatementEnd(const std::string& text, size_t start) {
     int paren = 0;
     int brace = 0;
@@ -108,26 +113,31 @@ size_t findStatementEnd(const std::string& text, size_t start) {
 
 } // namespace
 
+// Constructor del analizador
 SolutionAnalyzer::SolutionAnalyzer(const std::string& apiKey) 
     : openAIKey(apiKey) {
 }
 
 // ========== HELPER PRIVADO: Limpiar código de comentarios y strings ==========
+
+// Limpia código removiendo comentarios y neutralizando strings
 std::string SolutionAnalyzer::cleanCode(const std::string& code) {
-    // CHANGE: Preserve literals/operators and only neutralize comment characters.
     std::string cleaned;
     cleaned.reserve(code.size());
     
+    // Estado de la máquina
     bool inString = false;
     bool inLineComment = false;
     bool inBlockComment = false;
     bool escape = false;
     char stringChar = '\0';
     
+    // Procesar carácter por carácter
     for (size_t i = 0; i < code.size(); ++i) {
         char c = code[i];
         char next = (i + 1 < code.size()) ? code[i + 1] : '\0';
         
+        // ESTADO 1: Comentario de línea
         if (inLineComment) {
             cleaned += (c == '\n') ? '\n' : ' ';
             if (c == '\n') {
@@ -136,6 +146,7 @@ std::string SolutionAnalyzer::cleanCode(const std::string& code) {
             continue;
         }
         
+        // ESTADO 2: Comentario de bloque
         if (inBlockComment) {
             cleaned += (c == '\n') ? '\n' : ' ';
             if (c == '*' && next == '/') {
@@ -147,6 +158,7 @@ std::string SolutionAnalyzer::cleanCode(const std::string& code) {
             continue;
         }
         
+        // DETECCIÓN: Inicio de comentario de línea
         if (!inString && c == '/' && next == '/') {
             cleaned += ' ';
             cleaned += ' ';
@@ -155,6 +167,7 @@ std::string SolutionAnalyzer::cleanCode(const std::string& code) {
             continue;
         }
         
+        // DETECCIÓN: Inicio de comentario de bloque
         if (!inString && c == '/' && next == '*') {
             cleaned += ' ';
             cleaned += ' ';
@@ -163,8 +176,10 @@ std::string SolutionAnalyzer::cleanCode(const std::string& code) {
             continue;
         }
         
+        // Agregar carácter actual
         cleaned += c;
         
+        // MANEJO DE STRINGS
         if ((c == '"' || c == '\'') && !escape) {
             if (inString && c == stringChar) {
                 inString = false;
@@ -174,6 +189,7 @@ std::string SolutionAnalyzer::cleanCode(const std::string& code) {
             }
         }
         
+        // MANEJO DE ESCAPE
         if (inString && c == '\\' && !escape) {
             escape = true;
         } else {
@@ -184,8 +200,8 @@ std::string SolutionAnalyzer::cleanCode(const std::string& code) {
     return cleaned;
 }
 
+// Obtiene versión limpia con caché
 const std::string& SolutionAnalyzer::getCleaned(const std::string& code) {
-    // CHANGE: Memoize sanitized fragments to ensure we only clean each snippet once.
     auto it = cleanCache.find(code);
     if (it != cleanCache.end()) {
         return it->second;
@@ -196,15 +212,19 @@ const std::string& SolutionAnalyzer::getCleaned(const std::string& code) {
     return inserted.first->second;
 }
 
+// Detecta actualización logarítmica en un loop
 bool SolutionAnalyzer::detectLogarithmicUpdate(const std::string& text) const {
     static const std::regex divideAssign(R"(\b\w+\s*/=\s*(2|\w+\s*>>\s*1))");
     static const std::regex halveAssign(R"(\b\w+\s*=\s*\w+\s*/\s*2)");
     static const std::regex shiftAssign(R"(\b\w+\s*>>=\s*1)" );
+
     if (std::regex_search(text, divideAssign) ||
         std::regex_search(text, halveAssign) ||
         std::regex_search(text, shiftAssign)) {
         return true;
     }
+
+    // Patrón de binary search: mid se asigna a left/right
     if (text.find("mid") != std::string::npos &&
         (text.find("left = mid") != std::string::npos ||
          text.find("right = mid") != std::string::npos)) {
@@ -213,7 +233,9 @@ bool SolutionAnalyzer::detectLogarithmicUpdate(const std::string& text) const {
     return false;
 }
 
+// Detecta movimiento de punteros en direcciones opuestas
 bool SolutionAnalyzer::detectOppositePointerMovement(const std::string& loopBody) const {
+    // Helper: Verifica si string contiene alguno de los tokens
     auto containsAny = [](const std::string& haystack, const std::vector<std::string>& needles) {
         for (const auto& token : needles) {
             if (haystack.find(token) != std::string::npos) {
@@ -222,13 +244,19 @@ bool SolutionAnalyzer::detectOppositePointerMovement(const std::string& loopBody
         }
         return false;
     };
+
+    // Patrón 1: left++ y right--
     bool incLeft = containsAny(loopBody, {"left++", "++left", "left += 1", "left +=1", "left = left + 1"});
     bool decRight = containsAny(loopBody, {"right--", "--right", "right -= 1", "right -=1", "right = right - 1"});
+
+    // Patrón 2: slow++ y fast+=2
     bool incSlow = containsAny(loopBody, {"slow++", "++slow", "slow += 1"});
     bool incFastTwice = containsAny(loopBody, {"fast += 2", "fast +=2", "fast = fast + 2", "fast++", "++fast"});
     return (incLeft && decRight) || (incSlow && incFastTwice);
 }
 
+
+// Detecta condiciones típicas de two pointers
 bool SolutionAnalyzer::detectPointerStopCondition(const std::string& loopHeader) const {
     static const std::vector<std::string> conditions = {
         "left < right", "left <= right", "right > left", "right >= left",
@@ -242,6 +270,7 @@ bool SolutionAnalyzer::detectPointerStopCondition(const std::string& loopHeader)
     return false;
 }
 
+// Detecta operaciones multiplicativas en el loop
 bool SolutionAnalyzer::detectMultiplicativeUpdate(const std::string& loopBody) const {
     static const std::regex multAssign(R"(\b\w+\s*=\s*\w+\s*[*\/])");
     static const std::regex mulPattern(R"(\b\w+\s*[*]\s*\w+)");
@@ -253,10 +282,12 @@ bool SolutionAnalyzer::detectMultiplicativeUpdate(const std::string& loopBody) c
            std::regex_search(loopBody, divAssign);
 }
 
+// Detecta uso del operador módulo
 bool SolutionAnalyzer::detectModuloUsage(const std::string& loopBody) const {
     return loopBody.find('%') != std::string::npos;
 }
 
+// Detecta operaciones de potencia
 bool SolutionAnalyzer::detectPowerOperation(const std::string& loopBody) const {
     return loopBody.find("pow(") != std::string::npos ||
            loopBody.find("std::pow") != std::string::npos ||
@@ -264,6 +295,7 @@ bool SolutionAnalyzer::detectPowerOperation(const std::string& loopBody) const {
            loopBody.find("^=") != std::string::npos;
 }
 
+// Detecta patrón de búsqueda binaria
 bool SolutionAnalyzer::detectBinarySearchPattern(const std::string& loopText) const {
     bool hasMid = loopText.find("mid") != std::string::npos;
     bool updatesLeft = loopText.find("left = mid") != std::string::npos ||
@@ -275,12 +307,14 @@ bool SolutionAnalyzer::detectBinarySearchPattern(const std::string& loopText) co
     return hasMid && updatesLeft && updatesRight;
 }
 
+// Detecta llamadas a sort() dentro del loop
 bool SolutionAnalyzer::detectSortingInLoop(const std::string& loopBody) const {
     return loopBody.find("sort(") != std::string::npos ||
            loopBody.find("std::sort") != std::string::npos ||
            loopBody.find("stable_sort") != std::string::npos;
 }
 
+// Detecta uso de estructuras hash
 bool SolutionAnalyzer::detectHashStructure(const std::string& loopBody) const {
     static const std::vector<std::string> tokens = {
         "unordered_map", "std::unordered_map", "unordered_set", "std::unordered_set",
@@ -294,6 +328,7 @@ bool SolutionAnalyzer::detectHashStructure(const std::string& loopBody) const {
     return false;
 }
 
+// Detecta uso de memoización
 bool SolutionAnalyzer::detectMemoization(const std::string& code) const {
     static const std::vector<std::regex> memoPatterns = {
         std::regex(R"(\bmemo\b)"),
@@ -310,6 +345,7 @@ bool SolutionAnalyzer::detectMemoization(const std::string& code) const {
     return false;
 }
 
+// Detecta variables de two pointers
 bool SolutionAnalyzer::hasTwoPointerVariables(const std::string& loopBody) const {
     bool hasLeftRight = loopBody.find("left") != std::string::npos &&
                         loopBody.find("right") != std::string::npos;
@@ -318,8 +354,9 @@ bool SolutionAnalyzer::hasTwoPointerVariables(const std::string& loopBody) const
     return hasLeftRight || hasSlowFast;
 }
 
+// Extrae código relevante del usuario (ignora harness)
 std::string SolutionAnalyzer::extractRelevantCode(const std::string& code) {
-    // CHANGE: Track snippet status to flag harness-only submissions.
+    // Trackear estado del snippet extraído
     lastSnippetStatus = AnalysisStatus::OK;
     
     if (code.empty()) {
@@ -329,6 +366,7 @@ std::string SolutionAnalyzer::extractRelevantCode(const std::string& code) {
 
     std::string cleaned = cleanCode(code);
     
+    // Helper: Convertir a minúsculas
     auto toLower = [](const std::string& text) {
         std::string lower;
         lower.reserve(text.size());
@@ -338,6 +376,7 @@ std::string SolutionAnalyzer::extractRelevantCode(const std::string& code) {
         return lower;
     };
 
+    // Estructura para almacenar información de funciones
     struct FunctionBlock {
         std::string name;
         size_t signaturePos = 0;
@@ -346,6 +385,7 @@ std::string SolutionAnalyzer::extractRelevantCode(const std::string& code) {
         bool hasIO = false;
     };
 
+    // Helper: Verifica si un rango contiene tokens de IO
     auto rangeContainsIO = [&](size_t start, size_t end) {
         for (const auto& marker : ioTokens()) {
             size_t pos = cleaned.find(marker, start);
@@ -369,6 +409,7 @@ std::string SolutionAnalyzer::extractRelevantCode(const std::string& code) {
         const std::smatch& match = *it;
         std::string funcName = match[1].str();
 
+        // Ignorar keywords de control de flujo
         if (funcName == "if" || funcName == "for" || funcName == "while" ||
             funcName == "switch" || funcName == "catch" || funcName == "else") {
             continue;
@@ -376,6 +417,8 @@ std::string SolutionAnalyzer::extractRelevantCode(const std::string& code) {
 
         size_t signaturePos = static_cast<size_t>(match.position());
         size_t bodyStart = signaturePos + match.length();
+
+        // Encontrar cierre de la función
         int braceDepth = 1;
         size_t pos = bodyStart;
         while (pos < cleaned.size() && braceDepth > 0) {
@@ -554,7 +597,7 @@ std::string SolutionAnalyzer::extractRelevantCode(const std::string& code) {
     };
 
     if (snippet.empty() && mainBlock) {
-        // CHANGE: When no markers exist, only analyze what comes after harness IO.
+        // Extraer desde main ignorando harness de IO
         snippet = trimSnippet(sliceAfterIO(*mainBlock));
     }
 
@@ -579,7 +622,7 @@ std::string SolutionAnalyzer::extractRelevantCode(const std::string& code) {
     };
 
     if (!snippet.empty()) {
-        // CHANGE: Pull helper definitions that are referenced by user logic.
+        // Incluir funciones helper referenciadas
         includeHelpers();
     }
 
@@ -718,7 +761,6 @@ std::vector<std::string> SolutionAnalyzer::detectDataStructuresFromClean(const s
 }
 
 std::vector<AlgorithmPattern> SolutionAnalyzer::detectPatterns(const std::string& code) {
-    // CHANGE: Legacy overload builds a temporary context for compatibility.
     AnalysisContext context;
     context.rawCode = code;
     if (!code.empty()) {
@@ -736,7 +778,6 @@ std::vector<AlgorithmPattern> SolutionAnalyzer::detectPatterns(AnalysisContext& 
 }
 
 ComplexityAnalysis SolutionAnalyzer::estimateComplexity(const std::string& code) {
-    // CHANGE: Wrapper builds a temporary context so external callers keep legacy API.
     AnalysisContext context;
     context.rawCode = code;
     if (!code.empty()) {
@@ -895,11 +936,11 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
                                        int testsPassed,
                                        int testsFailed) {
     CodeAnalysis analysis;
-    analysis.status = "OK"; // CHANGE: Default status expuesto a la API.
+    analysis.status = "OK"; // Default status expuesto a la API.
     
     // Validar entrada
     if (code.empty()) {
-        analysis.status = "NoUserCode"; // CHANGE: Explicita que no hay código que analizar.
+        analysis.status = "NoUserCode"; // Explicita que no hay código que analizar.
         analysis.complexity.timeComplexity = "N/A";
         analysis.complexity.spaceComplexity = "N/A";
         analysis.complexity.confidence = "low";
@@ -925,7 +966,7 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
         context.cleanedCode.find_first_not_of(" \t\r\n") != std::string::npos;
     
     if (!hasUserCode) {
-        // CHANGE: Surface status so UI can indicate plantilla vacía instead of false positives.
+        // Surface status so UI can indicate plantilla vacía instead of false positives.
         analysis.status = "NoUserCode";
         analysis.complexity.timeComplexity = "N/A";
         analysis.complexity.spaceComplexity = "N/A";
@@ -977,7 +1018,7 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
                                timeComplexity.find("n^") != std::string::npos;
     if (isQuadraticOrHigher) {
         analysis.suggestions.push_back(
-            "💡 La complejidad es cuadrática o mayor. Considera usar estructuras como "
+            "La complejidad es cuadrática o mayor. Considera usar estructuras como "
             "hash maps o algoritmos más eficientes."
         );
     }
@@ -985,7 +1026,7 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
     if (isQuadraticOrHigher &&
         analysis.dataStructures.empty() && countNestedLoops(context) > 1) {
         analysis.suggestions.push_back(
-            "💡 Múltiples loops sin estructuras auxiliares. Considera usar un hash map o set "
+            "Múltiples loops sin estructuras auxiliares. Considera usar un hash map o set "
             "para reducir la complejidad."
         );
     }
@@ -999,14 +1040,14 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
     }
     if (heavyOperations) {
         analysis.suggestions.push_back(
-            "⚠️ Dentro de tus loops hay multiplicaciones/divisiones o módulo repetidos. "
+            "Dentro de tus loops hay multiplicaciones/divisiones o módulo repetidos. "
             "Evalúa si puedes mover esas operaciones fuera del loop o precalcular resultados."
         );
     }
     
     if (testsFailed > 0 && analysis.patterns.empty()) {
         analysis.suggestions.push_back(
-            "💡 No se detectó un patrón algorítmico claro. Revisa si el problema "
+            "No se detectó un patrón algorítmico claro. Revisa si el problema "
             "requiere two pointers, sliding window, o búsqueda binaria."
         );
     }
@@ -1014,7 +1055,7 @@ CodeAnalysis SolutionAnalyzer::analyze(const std::string& code,
     if (containsRecursion(context.cleanedCode) &&
         analysis.complexity.explanation.find("memoización") == std::string::npos) {
         analysis.suggestions.push_back(
-            "💡 Recursión detectada sin memoización. Considera cachear resultados para evitar recomputar."
+            "Recursión detectada sin memoización. Considera cachear resultados para evitar recomputar."
         );
     }
     

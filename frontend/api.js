@@ -1,6 +1,7 @@
+// URL base del backend (puede cambiarse según configuración)
 const API_URL = 'http://localhost:8080/api';
 
-// Obtener lista de problemas
+// Obtener lista de problemas desde el backend
 async function getProblems() {
     try {
         const response = await fetch(`${API_URL}/problems`);
@@ -12,7 +13,7 @@ async function getProblems() {
     }
 }
 
-// Obtener problema específico
+// Obtiene detalles completos de un problema específico
 async function getProblem(id) {
     try {
         const response = await fetch(`${API_URL}/problems/${id}`);
@@ -24,7 +25,7 @@ async function getProblem(id) {
     }
 }
 
-// Ejecutar código
+// Ejecuta código del usuario en el backend
 async function executeCode(code, testCases, problemDescription = '') {
     try {
         const response = await fetch(`${API_URL}/execute`, {
